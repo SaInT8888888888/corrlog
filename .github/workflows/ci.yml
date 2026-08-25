@@ -31,6 +31,9 @@ jobs:
       - name: Adversarial test suite
         run: python tests/test_adversarial.py
 
+      - name: Cross-implementation verifier fixture
+        run: python tests/test_fixture.py
+
       - name: End-to-end demo
         run: python examples/demo.py
 

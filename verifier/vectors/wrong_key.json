@@ -1,0 +1,33 @@
+{
+  "correctionId": "00000000-0000-4000-8000-000000000003",
+  "agent": {
+    "id": "vector-agent",
+    "publicKey": "Qsaq7bvpvTBnTycZOzZoGsjC0qEJg1nhZmLbybYSi64"
+  },
+  "principal": {
+    "id": "acme-corp",
+    "type": "organization"
+  },
+  "action": {
+    "type": "memory.write"
+  },
+  "reason": "",
+  "trigger": "supersede",
+  "fix": {
+    "type": "noop"
+  },
+  "timestamp": "2026-08-25T00:00:00+00:00",
+  "metadata": {
+    "inputHash": {
+      "alg": "sha256",
+      "digest": "EdglPoHhwuecbP4uH8sKXwc_OhYHUPBbGbTU9r5Bhr0"
+    }
+  },
+  "signature": {
+    "alg": "Ed25519",
+    "kid": "Qsaq7bvpvTBnTycZOzZoGsjC0qEJg1nhZmLbybYSi64",
+    "publicKey": "Qsaq7bvpvTBnTycZOzZoGsjC0qEJg1nhZmLbybYSi64",
+    "canonicalization": "RFC8785",
+    "sig": "9XfIthHJZ905M50WBsI5oncrCOQHWRE6V-yhmXyFzDhpFSDsPHj9gHg994xfLsbudKjKikSTlC08pv3kvd5fAw"
+  }
+}

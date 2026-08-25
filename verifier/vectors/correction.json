@@ -1,0 +1,40 @@
+{
+  "correctionId": "00000000-0000-4000-8000-000000000002",
+  "agent": {
+    "id": "vector-agent",
+    "publicKey": "OtF6YA1cqeED8GAFXfsYsHlYppW4eD4wmjpeFli9oy8"
+  },
+  "principal": {
+    "id": "unknown",
+    "type": "organization"
+  },
+  "supersedes": {
+    "receiptId": "00000000-0000-4000-8000-000000000001",
+    "digest": {
+      "alg": "sha256",
+      "digest": "Qx8Ju9WvQzppqgKmNztNoJzV1N3RlUtjhZgLR7iRYVE"
+    }
+  },
+  "action": {
+    "type": "memory.write"
+  },
+  "reason": "yield figure used wrong unit (kg vs tonne)",
+  "trigger": "check_failed",
+  "fix": {
+    "type": "replace",
+    "note": "converted kg to tonnes",
+    "contentHash": {
+      "alg": "sha256",
+      "digest": "t1gDJq0w6c2DspbNTiNBfbbAQf_qyz22D6bfc39MbVE"
+    }
+  },
+  "timestamp": "2026-08-25T00:01:00+00:00",
+  "metadata": {},
+  "signature": {
+    "alg": "Ed25519",
+    "kid": "OtF6YA1cqeED8GAFXfsYsHlYppW4eD4wmjpeFli9oy8",
+    "publicKey": "OtF6YA1cqeED8GAFXfsYsHlYppW4eD4wmjpeFli9oy8",
+    "canonicalization": "RFC8785",
+    "sig": "ZiCypN3_vVjHG2Qw3BBlJ7_F_4K4WbOv4Jh_IS4q8oheCCCO0YXQIY55qDRx1S9uQVrv4MU1XiHSbNEzpDoyAA"
+  }
+}

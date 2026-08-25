@@ -1,0 +1,38 @@
+{
+  "correctionId": "00000000-0000-4000-8000-000000000001",
+  "agent": {
+    "id": "vector-agent",
+    "publicKey": "OtF6YA1cqeED8GAFXfsYsHlYppW4eD4wmjpeFli9oy8",
+    "name": "Vector Test Agent"
+  },
+  "principal": {
+    "id": "acme-corp",
+    "type": "organization"
+  },
+  "action": {
+    "type": "memory.write"
+  },
+  "reason": "",
+  "trigger": "supersede",
+  "fix": {
+    "type": "noop"
+  },
+  "timestamp": "2026-08-25T00:00:00+00:00",
+  "metadata": {
+    "inputHash": {
+      "alg": "sha256",
+      "digest": "EdglPoHhwuecbP4uH8sKXwc_OhYHUPBbGbTU9r5Bhr0"
+    },
+    "outputHash": {
+      "alg": "sha256",
+      "digest": "GJf_QQROrGnHJAKFId0aox8Dmoia_agUISJAflFYDbk"
+    }
+  },
+  "signature": {
+    "alg": "Ed25519",
+    "kid": "OtF6YA1cqeED8GAFXfsYsHlYppW4eD4wmjpeFli9oy8",
+    "publicKey": "OtF6YA1cqeED8GAFXfsYsHlYppW4eD4wmjpeFli9oy8",
+    "canonicalization": "RFC8785",
+    "sig": "QrEMUdDNA_4OSI0bNXtQ02gageNXqP-xijU4PbLIr3t7yQQpMm_ZLq0Q1D6Mp4auLIGQURK--ehPxKRDf-H_Aw"
+  }
+}

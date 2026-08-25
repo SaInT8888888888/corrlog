@@ -97,19 +97,25 @@ def record(
     private_key: ed25519.Ed25519PrivateKey,
     kid: str | None = None,
     metadata: dict[str, Any] | None = None,
+    correction_id: str | None = None,
+    timestamp: str | None = None,
 ) -> dict[str, Any]:
     """Build a signed ACR-compatible *action* record (the receipt a correction can supersede).
 
     This is the lightweight action record; corrections are built with `retract`.
+
+    ``correction_id`` and ``timestamp`` are OPTIONAL and exist for deterministic
+    test vectors (reproducible records, cross-implementation verification).
+    When omitted they default to a fresh UUID / current UTC time.
     """
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = timestamp if timestamp is not None else datetime.now(timezone.utc).isoformat()
     public_key = private_key.public_key()
     pk_b64 = public_key_b64url(public_key)
     if kid is None:
         kid = pk_b64
 
     body: dict[str, Any] = {
-        "correctionId": str(uuid.uuid4()),
+        "correctionId": correction_id if correction_id is not None else str(uuid.uuid4()),
         "agent": {"id": agent_id, "publicKey": pk_b64},
         "principal": {"id": principal_id, "type": principal_type},
         "action": {"type": action_type},
@@ -152,19 +158,24 @@ def retract(
     corrected_content: Any = None,
     kid: str | None = None,
     metadata: dict[str, Any] | None = None,
+    correction_id: str | None = None,
+    timestamp: str | None = None,
 ) -> dict[str, Any]:
     """Build a signed correction record that supersedes `prior_record`.
 
     `prior_record` is the action record (or prior correction) being amended.
     The supersedes pointer is a SHA-256 content hash of the prior record's
     canonical bytes — not just an id — so the chain is verifiable offline.
+
+    ``correction_id`` and ``timestamp`` are OPTIONAL and exist for deterministic
+    test vectors (reproducible records, cross-implementation verification).
     """
     if trigger not in VALID_TRIGGERS:
         raise ValueError(f"trigger must be one of {VALID_TRIGGERS}, got {trigger!r}")
     if fix_type not in VALID_FIX_TYPES:
         raise ValueError(f"fix.type must be one of {VALID_FIX_TYPES}, got {fix_type!r}")
 
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = timestamp if timestamp is not None else datetime.now(timezone.utc).isoformat()
     public_key = private_key.public_key()
     pk_b64 = public_key_b64url(public_key)
     if kid is None:
@@ -173,7 +184,7 @@ def retract(
     prior_digest = _hash_object(canonical_json(prior_record))
 
     body: dict[str, Any] = {
-        "correctionId": str(uuid.uuid4()),
+        "correctionId": correction_id if correction_id is not None else str(uuid.uuid4()),
         "agent": {"id": agent_id, "publicKey": pk_b64},
         "principal": {"id": principal_id, "type": principal_type},
         "supersedes": {
