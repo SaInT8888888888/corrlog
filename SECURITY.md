@@ -1,67 +1,80 @@
-# Security note: self-authenticating verification vs key substitution
+# Security Model — Signature Validity and Signer Trust
 
-**Status:** resolved. This documents a real vulnerability the independent verifier
-surfaced, the fix, and why the verifier is not ceremonial.
+This note documents the trust boundary of Agent Correction Records (ACRs), a
+key-substitution weakness found while building an independent verifier, and the
+mitigation now required by the spec. It is deliberately narrow: it describes what
+verification does and does not establish, so that anyone consuming an ACR knows what a
+passing check actually proves.
 
-## The finding
+## Two distinct properties
 
-When building the independent verifier (`verifier/standalone.py`), a wrong-key test
-vector *passed* verification. A record signed by an attacker's key — with that key
-embedded in the record's `signature.publicKey` — was accepted as valid.
+Verifying an ACR involves two separate questions that must not be conflated:
 
-This is **key substitution**. A self-authenticating verifier (one that trusts the key
-embedded in the record) cannot distinguish "signed by the party we trust" from "signed by
-whoever wrote this record." The attacker controls both the record and the embedded key, so
-they produce a signature that the verifier happily accepts. The record is *self-consistent*
-but not *authentic to us*.
+1. **Signature validity** — is this record internally consistent, and does its signature
+   match the public key presented with it? This is self-contained and checkable offline
+   with no external state.
+2. **Authenticity / trust** — was this record signed by a party the verifier has
+   independent reason to trust? This cannot be answered by the record alone.
 
-The corrlog SDK's own test suite did not catch this, because the SDK and its verifier
-share the same assumption (trust the embedded key). It was only exposed by re-implementing
-verification independently, from the spec, and testing the two against each other.
+A record can be signature-valid and still untrustworthy. Treating (1) as if it answered (2)
+is the core mistake described below.
 
-## Why this matters
+## The finding: key substitution
 
-Integrity (was the record altered?) and attribution (which key signed it?) are only
-meaningful if the key is *trusted*. A self-authenticating check answers "does this record
-carry a valid signature?" — which is not the question an auditor asks. The auditor asks
-"does this record carry *the right party's* signature?" Those are different questions, and
-only key pinning answers the second.
+Early verification was *self-authenticating*: the verifier trusted the public key embedded
+in the record and checked the signature against that same key.
 
-## The fix
+This accepts a forged record. An attacker constructs any record they like, signs it with a
+key they control, and embeds that key alongside the signature. The signature is valid *for
+the embedded key*, so a self-authenticating verifier accepts it. The check confirms only
+that whoever wrote the record also signed it — which is trivially true for any author,
+honest or not.
 
-The spec now separates two concepts that are easy to conflate:
+This surfaced when an ACR signed by an attacker-controlled key passed the standalone
+verifier. It was not caught by the SDK's own tests, because the SDK and its in-tree
+verifier shared the same assumption. An implementation that shares no code with the SDK —
+reimplementing the spec from its text alone — was required to expose it. This is the
+general reason a spec's guarantees should be validated by an independent implementation,
+not only by the reference code.
 
-1. **Signature validity** — the signature is correct for *some* key. This is what a
-   self-authenticating check does, and it is still useful (transport, quick sanity checks).
-2. **Trust** — the signature is correct for a *known, pinned* key. This is what an audit
-   requires.
+## The mitigation: key pinning
 
-The standalone verifier supports both:
+Trust must be anchored to a public key the verifier already holds, supplied out of band
+rather than read from the record under inspection. The verifier is given one or more
+expected public keys (the `--key` pin) and rejects any record not signed by a pinned key,
+regardless of whether the record's own signature is internally valid.
 
-- Without `--key`: self-authenticating (trusts the embedded key).
-- With `--key key.json`: pinned (rejects any record not signed by that exact key).
+This is the same pattern as pinning a TLS chain to a known set of certificate authorities,
+or verifying an SSH host by a previously recorded key fingerprint: the signature math is
+necessary but not sufficient; trust derives from a prior, independent commitment to a
+specific key.
 
-```bash
-# Self-authenticating: accepts a wrong-key record (the embedded key is "valid").
-python3 verifier/standalone.py verifier/vectors/wrong_key.json
+With pinning, the substituted-key record correctly fails: its signature is valid for its
+embedded key, but that key is not pinned, so verification rejects it.
 
-# Pinned: rejects it, because the known key did not sign it.
-python3 verifier/standalone.py --key verifier/vectors/key.json verifier/vectors/wrong_key.json
-```
+## What a passing verification proves
 
-This is the same trust model as TLS pinning CAs, or SSH showing a host-key fingerprint on
-first connect: the *channel* of trust is explicit, not inferred from the record itself.
+A verification that passes against a pinned key establishes:
 
-## Test coverage
+- **Integrity** — the record has not been altered since signing.
+- **Attribution** — it was signed by the holder of the pinned key.
+- **Chain consistency** — within a presented sequence, records are hash-linked in order
+  with no undetected edits or reordering.
 
-`tests/test_fixture.py::test_standalone_rejects_wrong_key_when_pinned` locks this in: the
-wrong-key vector MUST fail when pinned to the real key. If that regression ever reopens,
-the fixture fails.
+It does **not** establish:
 
-## Why this validates the architecture
+- **Completeness** — that every relevant event was recorded. A key-holder can decline to
+  write a record; a signed log proves nothing about what was never entered into it.
+  Bounding this gap requires mechanisms outside signing — external anchoring, independent
+  co-signers, and counterparty reconciliation — documented separately in SPEC.md §9.
+- **Correctness of content** — that the recorded claim is true; only that the pinned
+  key-holder asserted it.
 
-The bug is not the interesting part — self-authenticating verification being vulnerable to
-key substitution is well known. The interesting part is *how it was found*: not by the SDK
-testing itself, but by an independent verifier that shares no code with the SDK, checked
-against frozen vectors. That is exactly what the independent verifier is for, and it is why
-it is a first-class artifact, not a demo prop.
+Attribution and completeness are independent problems. Key pinning closes the attribution
+gap. It does not touch the completeness gap, and no signature scheme can.
+
+## Reporting
+
+Security issues can be reported by opening an issue on the repository or contacting the
+maintainer directly. Please do not disclose a suspected verification bypass publicly until
+a fix is available.
