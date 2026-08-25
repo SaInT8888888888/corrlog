@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "corrlog-core"
+version = "0.1.0"
+description = "Agent Correction Record (ACR): cryptographically signed, tamper-evident records of agent self-disclosed mistakes"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["cryptography>=41.0"]
+
+[project.optional-dependencies]
+crewai = ["crewai>=0.100"]
+
+[tool.setuptools.packages.find]
+include = ["corrlog_core*", "corrlog_crewai*"]
