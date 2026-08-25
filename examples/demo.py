@@ -65,8 +65,8 @@ tampered = dict(r1)
 tampered["action"] = {**r1["action"], "type": "payment.execute"}
 print(f"  tampered record verifies:    {verify(tampered)}  (must be False)")
 
-# Durable sink
-path = os.path.join(tempfile.gettempdir(), "corrlog-demo.jsonl")
+# Durable sink (fresh file each run)
+path = os.path.join(tempfile.gettempdir(), f"corrlog-demo-{os.getpid()}.jsonl")
 sink = JsonlSink(path)
 for r in chain:
     sink.append(r)
