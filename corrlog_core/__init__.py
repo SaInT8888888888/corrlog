@@ -1,8 +1,7 @@
 """corrlog-core — the Agent Correction Record (ACR) core.
 
 Framework-independent implementation of the ACR v1.0 spec (see SPEC.md):
-sign, verify, record, retract. Ed25519 over canonical JSON (JCS-sorted),
-consistent with AAR v1.0 canonicalization.
+sign, verify, record, retract. Ed25519 over RFC 8785 (JCS) canonical JSON.
 
 The only runtime dependency is `cryptography` (for Ed25519).
 """
@@ -18,6 +17,8 @@ from typing import Any, Protocol
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
+
+__version__ = "0.1.0"
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 CANONICALIZATION = "RFC8785"

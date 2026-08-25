@@ -20,4 +20,5 @@ autogen = ["autogen-core>=0.4"]
 include = ["corrlog_core*", "corrlog_crewai*", "corrlog_langchain*", "corrlog_autogen*", "corrlog_claude_code*"]
 
 [tool.setuptools.package-data]
+corrlog_core = ["schema/*.json"]
 corrlog_claude_code = ["hooks.json"]

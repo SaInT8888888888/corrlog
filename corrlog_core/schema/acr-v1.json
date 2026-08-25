@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/SaInT8888888888/corrlog/schema/acr-v1.json",
+  "$id": "https://github.com/SaInT8888888888/corrlog/corrlog_core/schema/acr-v1.json",
   "title": "Agent Correction Record (ACR) v1.0",
   "type": "object",
   "additionalProperties": true,
