@@ -34,6 +34,10 @@ that the model recognised its own error.
 were hidden) — a party that controls its own key can simply never write a correction. See
 SPEC.md §2 and §9 for the full boundary and the layers that narrow it.
 
+> **Security:** the independent verifier surfaced a key-substitution vulnerability in
+> self-authenticating verification; the spec now separates signature validity from trust
+> and supports pinned keys. See [SECURITY.md](SECURITY.md).
+
 | `trigger` | meaning |
 |---|---|
 | `supersede` | newer write replaced an older one |
