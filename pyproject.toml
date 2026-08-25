@@ -13,6 +13,11 @@ dependencies = ["cryptography>=41.0"]
 
 [project.optional-dependencies]
 crewai = ["crewai>=0.100"]
+langchain = ["langchain>=0.3"]
+autogen = ["autogen-core>=0.4"]
 
 [tool.setuptools.packages.find]
-include = ["corrlog_core*", "corrlog_crewai*"]
+include = ["corrlog_core*", "corrlog_crewai*", "corrlog_langchain*", "corrlog_autogen*", "corrlog_claude_code*"]
+
+[tool.setuptools.package-data]
+corrlog_claude_code = ["hooks.json"]

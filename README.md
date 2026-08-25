@@ -11,7 +11,9 @@ corrections prove you aren't hiding what went wrong.
 - **`corrlog-core`** — framework-independent sign / verify / record / retract, Ed25519 over
   canonical JSON (JCS), hash-chained. Single dependency: `cryptography`.
 - **`corrlog-crewai`** — drop-in CrewAI tool-call hooks (import-safe).
-- **`corrlog-langchain`** / **`corrlog-claude-code`** — next (see SPEC.md).
+- **`corrlog-langchain`** — `AgentMiddleware` for LangChain/LangGraph (native rollback via `Command`).
+- **`corrlog-claude-code`** — hook CLI + `hooks.json` plugin.
+- **`corrlog-autogen`** — `GuardedTool` wrapper over `run_json` (greenfield — no merged hook yet).
 
 ## Why
 

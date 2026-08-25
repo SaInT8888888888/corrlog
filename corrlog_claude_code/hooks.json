@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "command": "python3 -m corrlog_claude_code.cli"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "command": "python3 -m corrlog_claude_code.cli"
+      }
+    ]
+  }
+}
