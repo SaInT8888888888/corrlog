@@ -1,12 +1,12 @@
 # corrlog — the Agent Correction Record (ACR) SDK
 
-**A cryptographically signed, tamper-evident record of an agent's self-disclosed
-mistakes and the corrective action taken.**
+**A cryptographically signed, tamper-evident record of corrections to agent actions,
+plus the corrective action taken.**
 
 `corrlog` extends the [AAR receipt spec](https://github.com/Cyberweasel777/agent-action-receipt-spec)
-with the one thing every receipt standard is missing: a **correction record** — an agent
-signing "I did X, X was wrong, here's the fix and why." Receipts prove what happened;
-corrections prove you aren't hiding what went wrong.
+with the missing half of the audit ledger: the **correction** — a signed, hash-chained
+record of "this prior action was found wrong, here's the fix and why." Receipts prove what
+happened; corrections make the fixes you made *attributable and tamper-evident*.
 
 - **`corrlog-core`** — framework-independent sign / verify / record / retract, Ed25519 over
   canonical JSON (JCS), hash-chained. Single dependency: `cryptography`.
@@ -19,13 +19,20 @@ corrections prove you aren't hiding what went wrong.
 
 Every agent vendor sells "our agent is reliable" and hides mistakes. An auditor cannot
 distinguish "a system that never erred" (impossible) from "a system that hid its errors."
-A signed correction log is proof of *disclosure*, not proof of failure.
+A signed correction log turns "we fixed it" into something *attributable and verifiable*.
 
 ## The honesty rule
 
 An LLM does not reliably detect its own mistakes. So a correction is written when it is
 **detected** — by a supersede, a failed check, or a human flag — never by an LLM's unaided
-conscience. The agent's key signs it either way.
+conscience. The key that holds authority over the action signs it either way (the agent's
+key, or the runtime that holds it). The signature proves *who recorded the correction*, not
+that the model recognised its own error.
+
+**Scope, stated plainly:** ACR proves *integrity* (records weren't altered) and
+*attribution* (which key signed). It does **not** prove *completeness* (that no mistakes
+were hidden) — a party that controls its own key can simply never write a correction. See
+SPEC.md §2 and §9 for the full boundary and the layers that narrow it.
 
 | `trigger` | meaning |
 |---|---|
@@ -86,9 +93,10 @@ and cannot claim.
 
 ## Status
 
-`corrlog-core` + `corrlog-crewai` implemented and tested. `corrlog-langchain`,
-`corrlog-claude-code`, `corrlog-autogen` on the roadmap (SPEC.md documents the integration
-points for each).
+`corrlog-core` implemented and tested (core + adversarial suites). Adapters for
+CrewAI, LangChain/LangGraph, Claude Code, and AutoGen are implemented and import-safe.
+See SPEC.md for the integration points and §9 for the completeness roadmap (gapless
+sequence, external anchor, keyed trigger authorities).
 
 ## Tests
 

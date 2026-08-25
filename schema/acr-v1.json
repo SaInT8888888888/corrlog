@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/SaInT8888888888/corrlog/schema/acr-v1.json",
+  "title": "Agent Correction Record (ACR) v1.0",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "correctionId",
+    "agent",
+    "principal",
+    "supersedes",
+    "action",
+    "reason",
+    "trigger",
+    "fix",
+    "timestamp",
+    "signature"
+  ],
+  "properties": {
+    "correctionId": { "type": "string", "minLength": 1 },
+    "agent": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "publicKey": { "type": "string" }
+      }
+    },
+    "principal": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "type": "string" }
+      }
+    },
+    "supersedes": {
+      "type": "object",
+      "required": ["receiptId", "digest"],
+      "properties": {
+        "receiptId": { "type": "string", "minLength": 1 },
+        "digest": {
+          "type": "object",
+          "required": ["alg", "digest"],
+          "properties": {
+            "alg": { "type": "string", "enum": ["sha256", "sha384", "sha512", "blake3"] },
+            "digest": { "type": "string", "minLength": 16 }
+          }
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "target": { "type": "string" }
+      }
+    },
+    "reason": { "type": "string", "minLength": 1 },
+    "trigger": {
+      "type": "string",
+      "enum": ["supersede", "check_failed", "human_flagged", "self_correction"]
+    },
+    "fix": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["replace", "delete", "rollback", "noop", "other"] },
+        "contentHash": {
+          "type": "object",
+          "required": ["alg", "digest"],
+          "properties": {
+            "alg": { "type": "string" },
+            "digest": { "type": "string", "minLength": 16 }
+          }
+        },
+        "note": { "type": "string" }
+      }
+    },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "signature": {
+      "type": "object",
+      "required": ["alg", "kid", "canonicalization", "sig"],
+      "properties": {
+        "alg": { "type": "string", "const": "Ed25519" },
+        "kid": { "type": "string", "minLength": 1 },
+        "publicKey": { "type": "string" },
+        "canonicalization": { "type": "string", "const": "RFC8785" },
+        "sig": { "type": "string", "minLength": 1 }
+      }
+    },
+    "metadata": { "type": "object" }
+  }
+}

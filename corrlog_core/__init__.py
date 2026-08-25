@@ -20,24 +20,39 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-CANONICALIZATION = "JCS-SORTED-UTF8-NOWS"
+CANONICALIZATION = "RFC8785"
 VALID_TRIGGERS = ("supersede", "check_failed", "human_flagged", "self_correction")
 VALID_FIX_TYPES = ("replace", "delete", "rollback", "noop", "other")
 
 
 # ---------------------------------------------------------------------------
-# Canonical JSON (JCS-sorted, no whitespace), AAR v1.0 §5.1
+# Canonical JSON per RFC 8785 (JCS — JSON Canonicalization Scheme)
 # ---------------------------------------------------------------------------
 def canonical_json(obj: dict[str, Any]) -> bytes:
-    """Return canonical JSON bytes: keys sorted recursively, no whitespace, UTF-8."""
+    """Return RFC 8785 (JCS) canonical bytes.
+
+    RFC 8785 requires: recursive key sort by UTF-16 code unit order, no
+    insignificant whitespace, and specific string escaping — control
+    characters and non-ASCII MUST be escaped as ``\\uXXXX``/surrogate pairs so
+    every conforming implementation (Python, Rust, Go, TS) produces
+    byte-identical output. Python's ``json.dumps`` with ``ensure_ascii=True``
+    and ``separators=(",", ":")`` satisfies this for strings; numbers MUST be
+    serialized per RFC 8785 §3.2.3 (ES6 Number::toString) — this reference
+    avoids the float ambiguity by representing non-integer values as strings
+    (see `record`/`retract`), matching AAR's practice.
+    """
     def _sorted(o: Any) -> Any:
         if isinstance(o, dict):
+            # sort_keys sorts by Unicode code point, which matches UTF-16
+            # code unit order for the BMP (all keys here are ASCII-safe).
             return {k: _sorted(v) for k, v in sorted(o.items())}
         if isinstance(o, list):
             return [_sorted(v) for v in o]
         return o
 
-    return json.dumps(_sorted(obj), separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        _sorted(obj), separators=(",", ":"), ensure_ascii=True, sort_keys=True
+    ).encode("utf-8")
 
 
 # ---------------------------------------------------------------------------
