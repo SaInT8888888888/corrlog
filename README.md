@@ -51,6 +51,10 @@ SPEC.md §2 and §9 for the full boundary and the layers that narrow it.
 
 ## Quick start
 
+```bash
+pip install corrlog-core
+```
+
 ```python
 from corrlog_core import generate_keypair, record, retract, verify, verify_chain, MemorySink
 
