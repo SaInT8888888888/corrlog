@@ -93,9 +93,32 @@ per **RFC 8785 (JCS — JSON Canonicalization Scheme)**.
   - `type` (string, REQUIRED): `replace | delete | rollback | noop | other`.
   - `contentHash` (object, OPTIONAL): SHA-256 of corrected content (privacy-preserving — raw content SHOULD NOT be embedded).
   - `note` (string, OPTIONAL): human-readable description of the fix.
+  - `source` (object, OPTIONAL): where the correct value came from — the trust field that
+    turns "the value changed" into "the value changed, and here is the proof of where the
+    correct value lives". Without it a correction is an assertion; with it, the correction
+    is verifiable against its reference.
+    - `type` (string, REQUIRED when `source` present): `schema | document | database | api | human | other`.
+    - `reference` (string, REQUIRED when `source` present): the locator — a schema path, a
+      document id + section, a live lookup, the human who confirmed it.
 - `timestamp` (string, REQUIRED): RFC 3339 correction timestamp.
 - `signature` (object, REQUIRED): same shape as AAR `signature` (`alg:"Ed25519"`, `kid`, `publicKey`, `canonicalization:"RFC8785"`, `sig`).
 - `metadata` (object, OPTIONAL): extension bag.
+
+### 4.1b Uncertainty record (`kind: "unknown"`)
+
+An ACR record may be an **uncertainty record** — a signed declaration that the agent does
+NOT know something, issued instead of guessing. This is the honest complement to a
+correction: `retract` records a mistake *after* it was caught; `unknown` records the
+uncertainty *before* a mistake could be made.
+
+An uncertainty record is shaped like an ACR record but:
+- carries `kind: "unknown"` (REQUIRED),
+- has a `subject` (string, REQUIRED) naming what the agent does not know,
+- has an optional `note` (string),
+- has **no** `supersedes` pointer and **no** `fix` — it corrects nothing, it only declines.
+
+This is what turns "the agent said so when it didn't know" from a behaviour you have to
+trust into a record you can verify.
 
 ### 4.2 Chain semantics
 
