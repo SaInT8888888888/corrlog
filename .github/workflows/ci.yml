@@ -34,6 +34,9 @@ jobs:
       - name: Cross-implementation verifier fixture
         run: python tests/test_fixture.py
 
+      - name: ProofAgent adapter tests
+        run: python tests/test_proofagent.py
+
       - name: End-to-end demo
         run: python examples/demo.py
 

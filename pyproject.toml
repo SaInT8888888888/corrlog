@@ -17,7 +17,7 @@ langchain = ["langchain>=0.3"]
 autogen = ["autogen-core>=0.4"]
 
 [tool.setuptools.packages.find]
-include = ["corrlog_core*", "corrlog_crewai*", "corrlog_langchain*", "corrlog_autogen*", "corrlog_claude_code*"]
+include = ["corrlog_core*", "corrlog_crewai*", "corrlog_langchain*", "corrlog_autogen*", "corrlog_claude_code*", "corrlog_proofagent*"]
 
 [tool.setuptools.package-data]
 corrlog_core = ["schema/*.json"]

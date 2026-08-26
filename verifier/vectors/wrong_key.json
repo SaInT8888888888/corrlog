@@ -2,7 +2,7 @@
   "correctionId": "00000000-0000-4000-8000-000000000003",
   "agent": {
     "id": "vector-agent",
-    "publicKey": "Qsaq7bvpvTBnTycZOzZoGsjC0qEJg1nhZmLbybYSi64"
+    "publicKey": "Zk7a1UlF0oD-SvE7ZfaYIwlJo3lUQ00JfGKdMItXpwI"
   },
   "principal": {
     "id": "acme-corp",
@@ -25,9 +25,9 @@
   },
   "signature": {
     "alg": "Ed25519",
-    "kid": "Qsaq7bvpvTBnTycZOzZoGsjC0qEJg1nhZmLbybYSi64",
-    "publicKey": "Qsaq7bvpvTBnTycZOzZoGsjC0qEJg1nhZmLbybYSi64",
+    "kid": "Zk7a1UlF0oD-SvE7ZfaYIwlJo3lUQ00JfGKdMItXpwI",
+    "publicKey": "Zk7a1UlF0oD-SvE7ZfaYIwlJo3lUQ00JfGKdMItXpwI",
     "canonicalization": "RFC8785",
-    "sig": "9XfIthHJZ905M50WBsI5oncrCOQHWRE6V-yhmXyFzDhpFSDsPHj9gHg994xfLsbudKjKikSTlC08pv3kvd5fAw"
+    "sig": "nNa-7H33U4FfZSAUqZlb9dPothXJCOg77gKwVqmJeES8d3X_HOE7yvnVAr0JcNTQwPJj5nWv5VNZrtiH_FZXBg"
   }
 }
