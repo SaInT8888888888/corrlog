@@ -14,6 +14,10 @@ happened; corrections make the fixes you made *attributable and tamper-evident*.
 - **`corrlog-langchain`** — `AgentMiddleware` for LangChain/LangGraph (native rollback via `Command`).
 - **`corrlog-claude-code`** — hook CLI + `hooks.json` plugin.
 - **`corrlog-autogen`** — `GuardedTool` wrapper over `run_json` (greenfield — no merged hook yet).
+- **`corrlog-proofagent`** — governance gate verdict (pass/review/block) → signed `check_failed`
+  receipt, signed by the *operator's* key (import-safe, parses dataclass or dict).
+- **`corrlog-inspect`** — `Hooks` extension for UK AISI Inspect: emits a signed receipt on an
+  `INCORRECT` score, agent identity from `spec.model` (extension package, no core changes).
 
 ## Why
 
@@ -97,10 +101,13 @@ and cannot claim.
 
 ## Status
 
-`corrlog-core` implemented and tested (core + adversarial suites). Adapters for
-CrewAI, LangChain/LangGraph, Claude Code, and AutoGen are implemented and import-safe.
-See SPEC.md for the integration points and §9 for the completeness roadmap (gapless
-sequence, external anchor, keyed trigger authorities).
+`corrlog-core` implemented and tested (core + adversarial + verifier-fixture suites).
+Adapters for CrewAI, LangChain/LangGraph, Claude Code, and AutoGen are implemented and
+import-safe. Two keyed-detector adapters ship too: `corrlog-proofagent` (governance gate
+→ signed receipt) and `corrlog-inspect` (Inspect `Hooks` extension), both tested against
+the real upstream APIs with real signing verified end-to-end. See SPEC.md for the
+integration points and §9 for the completeness roadmap (gapless sequence, external
+anchor, keyed trigger authorities).
 
 ## Tests
 
