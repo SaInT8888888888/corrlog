@@ -37,6 +37,16 @@ SEED = bytes.fromhex(
 PRIV = ed25519.Ed25519PrivateKey.from_private_bytes(SEED)
 PUB = PRIV.public_key()
 
+# A DIFFERENT, also-deterministic key for the wrong_key vector. It must be a
+# fixed seed too — otherwise the "frozen vectors" guarantee breaks and the file
+# churns on every regeneration. It just needs to be a key that is NOT the real
+# key, so that verification against the pinned key fails. (32 bytes, derived
+# deterministically from a fixed string.)
+WRONG_KEY_SEED = bytes.fromhex(
+    "f8b1bdda478dc60ca39418ee335d8563a5457c62adcc1d61824752961f6b77a7"
+)
+WRONG_PRIV = ed25519.Ed25519PrivateKey.from_private_bytes(WRONG_KEY_SEED)
+
 
 def main() -> None:
     os.makedirs(VECTORS, exist_ok=True)
@@ -70,14 +80,13 @@ def main() -> None:
     tampered = json.loads(json.dumps(action))
     tampered["action"]["type"] = "payment.execute"  # mutate signed body
 
-    # Wrong key: same content, signed by a different key.
-    wrong_key = ed25519.Ed25519PrivateKey.generate()
+    # Wrong key: same content, signed by a DIFFERENT (also deterministic) key.
     wrong = record(
         agent_id="vector-agent",
         principal_id="acme-corp",
         action_type="memory.write",
         action_args={"project": "zespri", "topic": "yield"},
-        private_key=wrong_key,
+        private_key=WRONG_PRIV,
         correction_id="00000000-0000-4000-8000-000000000003",
         timestamp="2026-08-25T00:00:00+00:00",
     )
