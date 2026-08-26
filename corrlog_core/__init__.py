@@ -73,6 +73,35 @@ def public_key_b64url(pub: ed25519.Ed25519PublicKey) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
+def load_private_key(seed: str) -> ed25519.Ed25519PrivateKey:
+    """Load an Ed25519 private key from a 32-byte seed string.
+
+    Accepts the seed as base64url (no padding) or hex. This is the loading
+    counterpart to ``generate_keypair`` — adapters use it to turn an operator's
+    secret (from an env var) into a signing key without inventing their own
+    serialization.
+    """
+    s = seed.strip()
+    if s.startswith(("sk_", "priv_", "ed25519:")):
+        # allow a small prefix for readability; strip it
+        s = s.split(":", 1)[-1] if ":" in s else s[2:] if s.startswith("sk_") else s[5:]
+    try:
+        raw = base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+    except Exception:
+        raw = b""
+    if len(raw) != 32:
+        # fall back to hex
+        try:
+            raw = bytes.fromhex(s)
+        except Exception:
+            raw = b""
+    if len(raw) != 32:
+        raise ValueError(
+            "seed must decode to exactly 32 bytes (base64url or hex)"
+        )
+    return ed25519.Ed25519PrivateKey.from_private_bytes(raw)
+
+
 # ---------------------------------------------------------------------------
 # Record construction
 # ---------------------------------------------------------------------------

@@ -37,6 +37,11 @@ jobs:
       - name: ProofAgent adapter tests
         run: python tests/test_proofagent.py
 
+      - name: Inspect adapter tests (needs inspect-ai)
+        run: |
+          pip install "inspect-ai>=0.3"
+          python tests/test_inspect.py
+
       - name: End-to-end demo
         run: python examples/demo.py
 

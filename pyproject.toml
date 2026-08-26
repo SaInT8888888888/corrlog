@@ -15,9 +15,14 @@ dependencies = ["cryptography>=41.0"]
 crewai = ["crewai>=0.100"]
 langchain = ["langchain>=0.3"]
 autogen = ["autogen-core>=0.4"]
+inspect = ["inspect-ai>=0.3"]
+proofagent = []
+
+[project.entry-points.inspect_ai]
+corrlog_inspect = "corrlog_inspect"
 
 [tool.setuptools.packages.find]
-include = ["corrlog_core*", "corrlog_crewai*", "corrlog_langchain*", "corrlog_autogen*", "corrlog_claude_code*", "corrlog_proofagent*"]
+include = ["corrlog_core*", "corrlog_crewai*", "corrlog_langchain*", "corrlog_autogen*", "corrlog_claude_code*", "corrlog_proofagent*", "corrlog_inspect*"]
 
 [tool.setuptools.package-data]
 corrlog_core = ["schema/*.json"]
