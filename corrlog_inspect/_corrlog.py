@@ -25,6 +25,7 @@ FIX_TYPE = "other"  # the verdict itself travels in structured metadata (below)
 
 def build_correction(
     *,
+    agent_id: str,
     subject_ref: str,
     detail: str,
     failing_scorers: dict[str, Any],
@@ -36,6 +37,10 @@ def build_correction(
     encodes *what* the receipt asserts; `Signer.sign` is the part that makes it
     a tamper-evident, attributable record.
 
+    `agent_id` is WHO performed the action being corrected (the evaluated
+    model); `subject_ref` is WHAT was evaluated (the sample pointer). They are
+    distinct, and the receipt keeps them distinct.
+
     The verdict is placed in structured metadata with an enum-style `severity`
     key rather than free text, so a downstream consumer can filter on it as a
     first-class field (the schema note from review). If/when the core grows a
@@ -44,6 +49,7 @@ def build_correction(
     return {
         "trigger": TRIGGER,
         "fix_type": FIX_TYPE,
+        "agent_id": agent_id,
         "subject_ref": subject_ref,
         "detail": detail,
         "metadata": {
@@ -85,14 +91,14 @@ class CorrlogSigner:
 
         priv = load_private_key(self._key)
 
-        subject_ref = correction["subject_ref"]
+        agent_id = correction["agent_id"]      # the evaluated model
+        subject_ref = correction["subject_ref"]  # the sample pointer
         meta = dict(correction.get("metadata") or {})
 
-        # The evaluated subject is the "agent" whose action is being corrected.
-        # Inspect gives us the sample reference, not a model name, so we use
-        # subject_ref as the best available identity for the evaluated subject.
+        # The evaluated model is the "agent" whose action is being corrected;
+        # the sample reference is the action target. They stay separate.
         action = record(
-            agent_id=subject_ref,
+            agent_id=agent_id,
             principal_id="inspect-operator",
             principal_type="organization",
             action_type="eval.sample",
@@ -105,7 +111,7 @@ class CorrlogSigner:
             prior_record=action,
             reason=correction["detail"],
             trigger=correction["trigger"],
-            agent_id=subject_ref,
+            agent_id=agent_id,
             private_key=priv,
             principal_id="inspect-operator",
             principal_type="organization",

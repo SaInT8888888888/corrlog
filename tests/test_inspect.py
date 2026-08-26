@@ -19,7 +19,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from inspect_ai.hooks import SampleEnd
+from inspect_ai.hooks import SampleEnd, TaskStart
 from inspect_ai.log import EvalSample
 from inspect_ai.scorer import CORRECT, INCORRECT, Score
 
@@ -58,6 +58,28 @@ def _event(sample: EvalSample) -> SampleEnd:
     )
 
 
+def _task_start(model: str = "openai/gpt-4o") -> TaskStart:
+    # Build a minimal EvalSpec carrying the model, as TaskStart.spec.
+    from inspect_ai.log._log import EvalConfig, EvalDataset, EvalSpec
+    spec = EvalSpec(
+        eval_set_id=None,
+        eval_id="eval-1",
+        run_id="run-1",
+        task="mytask",
+        dataset=EvalDataset(),
+        model=model,
+        created="2026-08-26T00:00:00+00:00",
+        config=EvalConfig(),
+    )
+    return TaskStart(
+        eval_set_id=None,
+        run_id="run-1",
+        eval_id="eval-1",
+        spec=spec,
+        plan=None,
+    )
+
+
 def _run(hook: CorrlogReceiptHook, event: SampleEnd) -> None:
     asyncio.run(hook.on_sample_end(event))
 
@@ -78,11 +100,13 @@ def test_correct_sample_emits_nothing() -> None:
 def test_incorrect_sample_emits_one_receipt() -> None:
     signer = FakeSigner()
     hook = CorrlogReceiptHook(signer=signer)
+    asyncio.run(hook.on_task_start(_task_start("openai/gpt-4o")))
     _run(hook, _event(_sample({"match": Score(value=INCORRECT)})))
     assert len(signer.signed) == 1
     c = signer.signed[0]
     assert c["trigger"] == "check_failed"
     assert c["fix_type"] == "other"
+    assert c["agent_id"] == "openai/gpt-4o"
     assert c["subject_ref"] == "inspect:eval-1/s1"
     assert c["metadata"]["severity"] == "incorrect"
     assert c["metadata"]["failing_scorers"] == {"match": INCORRECT}
@@ -119,6 +143,7 @@ def test_signing_failure_is_non_fatal() -> None:
 
 def test_build_correction_shape_is_pure() -> None:
     c = build_correction(
+        agent_id="openai/gpt-4o",
         subject_ref="inspect:e/s",
         detail="d",
         failing_scorers={"match": "I"},
@@ -126,8 +151,30 @@ def test_build_correction_shape_is_pure() -> None:
     )
     assert c["trigger"] == "check_failed"
     assert c["fix_type"] == "other"
+    assert c["agent_id"] == "openai/gpt-4o"
+    assert c["subject_ref"] == "inspect:e/s"
     assert c["metadata"]["failing_scorers"] == {"match": "I"}
     assert c["metadata"]["eval_id"] == "e"
+
+
+def test_task_start_captures_model_identity() -> None:
+    """on_task_start populates the model map, and the receipt's agent_id is the model."""
+    signer = FakeSigner()
+    hook = CorrlogReceiptHook(signer=signer)
+    asyncio.run(hook.on_task_start(_task_start("openai/gpt-4o")))
+    assert hook._model_by_eval["eval-1"] == "openai/gpt-4o"
+    _run(hook, _event(_sample({"match": Score(value=INCORRECT)})))
+    assert signer.signed[0]["agent_id"] == "openai/gpt-4o"
+    # and the sample pointer stays distinct
+    assert signer.signed[0]["subject_ref"] == "inspect:eval-1/s1"
+
+
+def test_agent_id_falls_back_to_subject_ref_without_task_start() -> None:
+    """Defensive: if task-start never fired, agent_id degrades to the sample pointer."""
+    signer = FakeSigner()
+    hook = CorrlogReceiptHook(signer=signer)
+    _run(hook, _event(_sample({"match": Score(value=INCORRECT)})))
+    assert signer.signed[0]["agent_id"] == "inspect:eval-1/s1"
 
 
 # ── Integration: the seam is actually WIRED ───────────────────────────────
@@ -148,6 +195,7 @@ def test_real_signer_produces_verifiable_receipt() -> None:
     signer = CorrlogSigner(_seed_b64url(priv))
 
     correction = build_correction(
+        agent_id="openai/gpt-4o",
         subject_ref="inspect:eval-1/s1",
         detail="sample s1 scored INCORRECT on match",
         failing_scorers={"match": "I"},
@@ -158,6 +206,8 @@ def test_real_signer_produces_verifiable_receipt() -> None:
     # The receipt is a real signed ACR correction record.
     assert receipt["trigger"] == "check_failed"
     assert receipt["fix"]["type"] == "other"
+    # agent_id is the model, not the sample pointer
+    assert receipt["agent"]["id"] == "openai/gpt-4o"
     # verifies against its own embedded key, AND against the pinned key
     assert verify(receipt) is True
     assert verify(receipt, public_key=pub) is True
