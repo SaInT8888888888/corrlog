@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "corrlog-core"
-version = "0.1.0"
+version = "0.2.0"
 description = "Agent Correction Record (ACR): cryptographically signed, tamper-evident records of agent self-disclosed mistakes"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -15,14 +15,10 @@ dependencies = ["cryptography>=41.0"]
 crewai = ["crewai>=0.100"]
 langchain = ["langchain>=0.3"]
 autogen = ["autogen-core>=0.4"]
-inspect = ["inspect-ai>=0.3"]
 proofagent = []
 
-[project.entry-points.inspect_ai]
-corrlog_inspect = "corrlog_inspect"
-
 [tool.setuptools.packages.find]
-include = ["corrlog_core*", "corrlog_crewai*", "corrlog_langchain*", "corrlog_autogen*", "corrlog_claude_code*", "corrlog_proofagent*", "corrlog_inspect*"]
+include = ["corrlog_core*", "corrlog_crewai*", "corrlog_langchain*", "corrlog_autogen*", "corrlog_claude_code*", "corrlog_proofagent*"]
 
 [tool.setuptools.package-data]
 corrlog_core = ["schema/*.json"]

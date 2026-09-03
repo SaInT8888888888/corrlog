@@ -18,12 +18,13 @@ from typing import Any, Protocol
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 CANONICALIZATION = "RFC8785"
 VALID_TRIGGERS = ("supersede", "check_failed", "human_flagged", "self_correction")
 VALID_FIX_TYPES = ("replace", "delete", "rollback", "noop", "other")
+VALID_SOURCE_TYPES = ("schema", "document", "database", "api", "human", "other")
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +186,8 @@ def retract(
     fix_type: str = "replace",
     fix_note: str | None = None,
     corrected_content: Any = None,
+    source_type: str | None = None,
+    source_reference: str | None = None,
     kid: str | None = None,
     metadata: dict[str, Any] | None = None,
     correction_id: str | None = None,
@@ -194,7 +197,13 @@ def retract(
 
     `prior_record` is the action record (or prior correction) being amended.
     The supersedes pointer is a SHA-256 content hash of the prior record's
-    canonical bytes — not just an id — so the chain is verifiable offline.
+    canonical bytes - not just an id - so the chain is verifiable offline.
+
+    `source_type` + `source_reference` record WHERE the correct value came from
+    (schema, document, database, api, human, other). This is the trust field:
+    it turns "the value changed" into "the value changed, and here is the proof
+    of where the correct value lives". Without it a correction is just an
+    assertion that a new value is right - with it, the correction is verifiable.
 
     ``correction_id`` and ``timestamp`` are OPTIONAL and exist for deterministic
     test vectors (reproducible records, cross-implementation verification).
@@ -203,6 +212,10 @@ def retract(
         raise ValueError(f"trigger must be one of {VALID_TRIGGERS}, got {trigger!r}")
     if fix_type not in VALID_FIX_TYPES:
         raise ValueError(f"fix.type must be one of {VALID_FIX_TYPES}, got {fix_type!r}")
+    if source_type is not None and source_type not in VALID_SOURCE_TYPES:
+        raise ValueError(f"source.type must be one of {VALID_SOURCE_TYPES}, got {source_type!r}")
+    if (source_type is None) != (source_reference is None):
+        raise ValueError("source_type and source_reference must be provided together")
 
     ts = timestamp if timestamp is not None else datetime.now(timezone.utc).isoformat()
     public_key = private_key.public_key()
@@ -235,6 +248,61 @@ def retract(
             if isinstance(corrected_content, dict)
             else str(corrected_content).encode()
         )
+    if source_type is not None:
+        body["fix"]["source"] = {"type": source_type, "reference": source_reference}
+
+    _sign(body, private_key, kid)
+    return body
+
+
+def unknown(
+    *,
+    agent_id: str,
+    private_key: ed25519.Ed25519PrivateKey,
+    subject: str,
+    note: str | None = None,
+    agent_name: str | None = None,
+    principal_id: str = "unknown",
+    principal_type: str = "organization",
+    kid: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    correction_id: str | None = None,
+    timestamp: str | None = None,
+) -> dict[str, Any]:
+    """Build a signed "I don't know" (uncertainty) record.
+
+    This is the honesty record: an agent records that it does NOT know
+    something, instead of guessing and later needing a correction. It has no
+    ``supersedes`` pointer (nothing is being corrected) and no ``fix`` - it is
+    a first-class declaration of uncertainty, signed so it is attributable.
+
+    This is what turns "the agent said so when it didn't know" from a
+    behaviour you have to trust into a record you can verify. The complement
+    to ``retract``: retract records a mistake AFTER it was caught; ``unknown``
+    records the uncertainty BEFORE a mistake could be made.
+
+    ``correction_id`` and ``timestamp`` are OPTIONAL for deterministic test
+    vectors. The record reuses the ``correctionId`` key for chain-linking
+    consistency even though it is not itself a correction.
+    """
+    ts = timestamp if timestamp is not None else datetime.now(timezone.utc).isoformat()
+    public_key = private_key.public_key()
+    pk_b64 = public_key_b64url(public_key)
+    if kid is None:
+        kid = pk_b64
+
+    body: dict[str, Any] = {
+        "correctionId": correction_id if correction_id is not None else str(uuid.uuid4()),
+        "agent": {"id": agent_id, "publicKey": pk_b64},
+        "principal": {"id": principal_id, "type": principal_type},
+        "kind": "unknown",
+        "subject": subject,
+        "note": note or "",
+        "timestamp": ts,
+        "metadata": metadata or {},
+    }
+    if agent_name:
+        body["agent"]["name"] = agent_name
 
     _sign(body, private_key, kid)
     return body

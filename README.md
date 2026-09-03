@@ -56,7 +56,7 @@ pip install corrlog-core
 ```
 
 ```python
-from corrlog_core import generate_keypair, record, retract, verify, verify_chain, MemorySink
+from corrlog_core import generate_keypair, record, retract, unknown, verify, verify_chain, MemorySink
 
 priv, _ = generate_keypair()
 sink = MemorySink()
@@ -66,16 +66,22 @@ r1 = record(agent_id="forecast-agent", action_type="memory.write",
             action_args={"project": "zespri", "topic": "yield"},
             action_result={"yield": 1420}, private_key=priv)
 
-# 2. A check catches it's wrong -> signed correction
+# 2. A check catches it's wrong -> signed correction WITH the source of truth
 c1 = retract(prior_record=r1, reason="wrong unit (kg vs tonne)",
              trigger="check_failed", agent_id="forecast-agent", private_key=priv,
-             fix_type="replace", corrected_content={"yield": 1.42})
+             fix_type="replace", corrected_content={"yield": 1.42},
+             source_type="schema", source_reference="zespri/yield.fields")
 
-# 3. Verify — offline, no trusted storage
+# 3. Or the agent declines to guess -> a signed "I don't know" record
+u1 = unknown(agent_id="forecast-agent", private_key=priv,
+             subject="zespri.yield unit", note="not confirmed against the schema")
+
+# 4. Verify — offline, no trusted storage
 assert verify(c1)              # signature valid
 assert verify_chain([r1, c1])  # hash-linked, tamper-evident
+assert verify(u1)              # uncertainty is signed too
 
-# 4. Tamper-evident: mutate the record and verification fails
+# 5. Tamper-evident: mutate the record and verification fails
 r1["reason"] = "tampered"
 assert not verify(r1)
 ```
