@@ -21,6 +21,19 @@ attribution. It is not a certification, and it says nothing about completeness:
 it proves what was recorded, not that everything was recorded. That boundary is
 documented in corrlog's `SECURITY.md`.
 
+## Model identity
+
+The receipt's `agent_id` is the eval's primary model, captured from
+`spec.model` at task start. That is the field Inspect treats as the eval's
+model identity for cross-eval queries, confirmed by the Inspect maintainers.
+
+One caveat, from the same guidance: an eval can involve additional models via
+model roles (a grader, a tool-calling model, or similar that is not the
+primary). Treat `spec.model` as the headline identity of the eval, not an
+exhaustive list of every model that participated. Receipts are keyed to that
+headline model, and role-level attribution is out of scope for the ACR's
+agent field.
+
 ## Install
 
 ```bash
@@ -50,7 +63,7 @@ that key.
 
 This package owns the Inspect side end to end. The single call it cannot know is
 your corrlog core's mint-and-sign function, isolated in `CorrlogSigner.sign`
-(`src/corrlog_inspect/_corrlog.py`) behind a marked `ADJUST` block. The
+(`corrlog_inspect/_corrlog.py`) behind a marked `ADJUST` block. The
 correction payload is already built and shaped correctly before it reaches that
 call; you replace two lines with your real corrlog invocation and return the
 signed receipt. Nothing else needs changing.
