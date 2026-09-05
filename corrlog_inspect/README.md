@@ -70,6 +70,34 @@ Verify the receipts with corrlog's verifier, pinned to the public half of that
 key — the file is plain JSONL, so it also works with any downstream tooling
 that reads `corrlog_core.JsonlSink` output.
 
+## Platforms and compatibility (tested, not aspirational)
+
+- Python 3.10–3.13: the full test suite runs in CI on all four versions.
+- Operating systems: the full test suite runs in CI on ubuntu-latest,
+  windows-latest and macos-latest (GitHub Actions), covering install,
+  persistence, partial-tail tolerance and verification on all three.
+- Concurrent appends from several processes writing one receipts file were
+  stress-tested on Linux (8 processes, 1,000 records each, up to 150 KB per
+  record: no interleaving). On Windows, multi-process concurrent append to one
+  file is UNTESTED — Windows does not guarantee atomic O_APPEND appends, so
+  treat one receipts file as single-writer per process on Windows until
+  proven otherwise.
+- Inspect AI: tested against inspect-ai 0.3.260 and 0.3.263. The extension is
+  registered through Inspect's entry-point discovery; we have not verified
+  every Inspect release, so "works with Inspect" should be read as "works with
+  the tested 0.3.x releases".
+
+## Durability (exact guarantee, no stronger claim)
+
+Receipts are appended one complete JSON line per write. There is no fsync: a
+hard kill (SIGKILL, power loss) during the final write can lose the most
+recent receipts still in the OS page cache, and a write killed mid-record can
+leave a partial trailing line. Readers handle that: `JsonlSink.all()` skips
+unparseable lines instead of raising, reports how many via `damaged_lines`,
+and a subsequent append first closes any unterminated tail so new receipts are
+never glued onto a damaged line. Earlier history is always readable and
+verifiable after a crash.
+
 ## How it maps to ACR
 
 | Inspect                                   | ACR correction field            |
