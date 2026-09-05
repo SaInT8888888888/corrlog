@@ -216,29 +216,57 @@ def test_real_signer_produces_verifiable_receipt() -> None:
     assert receipt["metadata"]["failing_scorers"] == {"match": "I"}
 
 
-def test_real_signer_end_to_end_via_hook() -> None:
-    """The full path: hook detects INCORRECT → CorrlogSigner signs → verifiable."""
-    priv, pub = generate_keypair()
+def test_real_signer_end_to_end_via_hook(tmp_path=None) -> None:
+    """The full path: hook detects INCORRECT → CorrlogSigner signs → verifiable
+    and PERSISTED to the receipts file (regression for the 0.1.0 bug where the
+    signed receipt was discarded)."""
+    import json
     import os
+    import tempfile
+
+    priv, pub = generate_keypair()
+    with tempfile.TemporaryDirectory() as td:
+        out = os.path.join(td, "receipts.jsonl")
+        os.environ["CORRLOG_SIGNING_KEY"] = _seed_b64url(priv)
+        os.environ["CORRLOG_RECEIPTS_PATH"] = out
+        try:
+            hook = CorrlogReceiptHook()  # picks up key + path from env
+            assert hook.enabled() is True
+            assert hook._sink is not None
+            _run(hook, _event(_sample({"match": Score(value=INCORRECT)})))
+            _run(hook, _event(_sample({"match": Score(value=CORRECT)})))  # no-op
+            lines = [json.loads(l) for l in open(out, encoding="utf-8") if l.strip()]
+            assert len(lines) == 1, "exactly one receipt persisted, correct sample silent"
+            assert verify(lines[0], public_key=pub) is True
+        finally:
+            os.environ.pop("CORRLOG_SIGNING_KEY", None)
+            os.environ.pop("CORRLOG_RECEIPTS_PATH", None)
+
+
+def test_enabled_requires_key_and_path() -> None:
+    """Opt-in gate: key alone (the 0.1.0 footgun) must NOT enable the hook."""
+    import os
+
+    priv, _ = generate_keypair()
     os.environ["CORRLOG_SIGNING_KEY"] = _seed_b64url(priv)
     try:
-        hook = CorrlogReceiptHook()  # picks up the key from env
-        assert hook.enabled() is True
-        # use a real signer via the seam, capture by monkeypatching sign
-        signed = []
-        hook._signer = CorrlogSigner(os.environ["CORRLOG_SIGNING_KEY"])
-        # wrap to capture
-        real_sign = hook._signer.sign
-        def _capture(c):
-            r = real_sign(c)
-            signed.append(r)
-            return r
-        hook._signer.sign = _capture  # type: ignore[method-assign]
-        _run(hook, _event(_sample({"match": Score(value=INCORRECT)})))
-        assert len(signed) == 1
-        assert verify(signed[0], public_key=pub) is True
+        assert CorrlogReceiptHook.enabled() is False, "key without receipts path = disabled"
     finally:
         os.environ.pop("CORRLOG_SIGNING_KEY", None)
+
+
+def test_persistence_failure_is_non_fatal() -> None:
+    """A broken sink logs and never raises: the eval run must survive."""
+
+    class BrokenSink:
+        path = "broken"
+        def append(self, record) -> None:
+            raise OSError("disk full")
+
+    signer = FakeSigner()
+    hook = CorrlogReceiptHook(signer=signer, sink=BrokenSink())
+    # Must not raise even though append fails.
+    _run(hook, _event(_sample({"match": Score(value=INCORRECT)})))
 
 
 if __name__ == "__main__":

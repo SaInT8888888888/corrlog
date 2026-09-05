@@ -46,27 +46,29 @@ without it; only receipt emission needs it.
 
 ## Use
 
-The hook is opt-in. It stays dormant until you set a signing key in the
-environment, so installing the package changes nothing on its own:
+The hook is opt-in. It stays dormant until you set both a signing key and a
+receipts file in the environment, so installing the package changes nothing on
+its own:
 
 ```bash
-export CORRLOG_SIGNING_KEY=...   # key, or a path to one; your core decides
+export CORRLOG_SIGNING_KEY=...     # Ed25519 seed, base64url or hex
+export CORRLOG_RECEIPTS_PATH=...   # append-only JSONL file, e.g. ./corrlog-receipts.jsonl
 inspect eval your_task.py --model ...
 ```
 
-With the variable set, `enabled()` returns true, Inspect discovers the hook
-through the `inspect_ai` entry point, and failing samples produce receipts.
-Verify them with corrlog's standalone verifier, pinned to the public half of
-that key.
+With both variables set, `enabled()` returns true, Inspect discovers the hook
+through the `inspect_ai` entry point, and every failing sample produces a
+signed receipt that is appended to the file at `CORRLOG_RECEIPTS_PATH` — one
+receipt per failing sample, durable and hash-chained by file order. A sample
+that scores correct produces nothing.
 
-## The one thing to wire
+The hook requires both variables deliberately: a signing key without a
+receipts file would sign and discard (the 0.1.0 behaviour, fixed in 0.1.1).
+Signing or file-write failures are logged and never break the eval run.
 
-This package owns the Inspect side end to end. The single call it cannot know is
-your corrlog core's mint-and-sign function, isolated in `CorrlogSigner.sign`
-(`corrlog_inspect/_corrlog.py`) behind a marked `ADJUST` block. The
-correction payload is already built and shaped correctly before it reaches that
-call; you replace two lines with your real corrlog invocation and return the
-signed receipt. Nothing else needs changing.
+Verify the receipts with corrlog's verifier, pinned to the public half of that
+key — the file is plain JSONL, so it also works with any downstream tooling
+that reads `corrlog_core.JsonlSink` output.
 
 ## How it maps to ACR
 
@@ -94,8 +96,10 @@ pytest -q
 
 Covered: correct sample emits nothing, incorrect emits exactly one receipt,
 multiple failing scorers aggregate into a single receipt, no-scores is a no-op,
-a signing failure is caught and never breaks the eval run, and the payload
-builder is pure.
+a signing failure is caught and never breaks the eval run, the payload
+builder is pure, receipts are persisted to the JSONL file and verify against
+the pinned key, `enabled()` requires both key and receipts path, and a
+broken sink is non-fatal.
 
 ## License
 
