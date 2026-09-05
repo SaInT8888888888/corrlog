@@ -8,9 +8,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +32,11 @@ jobs:
 
       - name: Adversarial test suite
         run: python tests/test_adversarial.py
+
+      - name: Sink durability hardening regressions (F1/F2/F5)
+        run: |
+          python -m pip install pytest
+          python -m pytest tests/test_sink_hardening.py -q
 
       - name: Cross-implementation verifier fixture
         run: python tests/test_fixture.py
