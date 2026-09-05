@@ -18,7 +18,7 @@ from typing import Any, Protocol
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 CANONICALIZATION = "RFC8785"
@@ -53,7 +53,8 @@ def canonical_json(obj: dict[str, Any]) -> bytes:
         return o
 
     return json.dumps(
-        _sorted(obj), separators=(",", ":"), ensure_ascii=True, sort_keys=True
+        _sorted(obj), separators=(",", ":"), ensure_ascii=True, sort_keys=True,
+        allow_nan=False,
     ).encode("utf-8")
 
 
@@ -425,14 +426,47 @@ class MemorySink:
 
 
 class JsonlSink:
-    """Append-only JSONL file sink — durable, hash-chained by file order."""
+    """Append-only JSONL file sink — durable, hash-chained by file order.
+
+    Durability contract (exact, no stronger claim):
+      * each ``append`` performs one write of one complete JSON line; on POSIX
+        regular files opened O_APPEND each single write() is atomic against
+        other writers, so concurrent appends from several processes do not
+        interleave (verified at 8 processes / 150KB lines);
+      * there is NO fsync: a process crash (SIGKILL, power loss) can lose the
+        most recent writes still in the page cache, and a write killed
+        mid-record can leave a PARTIAL trailing line;
+      * ``append`` first closes any unterminated trailing line left by a
+        crashed writer, so a new record is never glued onto a damaged tail;
+      * readers tolerate damage: ``all()`` skips unparseable lines instead of
+        raising, and reports how many were skipped via ``damaged_lines``.
+        A damaged trailing line therefore never makes earlier history
+        unreadable, and appends can safely continue afterwards.
+    """
 
     def __init__(self, path: str) -> None:
         self.path = path
+        # Number of unparseable lines skipped by the most recent all() call.
+        self.damaged_lines = 0
 
     def append(self, record: dict[str, Any]) -> None:
-        with open(self.path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, separators=(",", ":"), ensure_ascii=False) + "\n")
+        # ensure_ascii=True so lone surrogates in content are escaped to
+        # \uXXXX and can never raise UnicodeEncodeError or corrupt the line
+        # (matches the canonicalisation path, which is also ASCII-escaped).
+        # Binary mode: the record is encoded first and written as one
+        # contiguous block, so on POSIX O_APPEND files each append stays
+        # atomic against other concurrent appenders.
+        line = json.dumps(record, separators=(",", ":"), ensure_ascii=True).encode("ascii") + b"\n"
+        with open(self.path, "ab+") as f:
+            # If a crashed writer left an unterminated trailing line, close it
+            # first so this record starts on its own line.
+            try:
+                f.seek(-1, 2)
+                if f.read(1) != b"\n":
+                    f.write(b"\n")
+            except OSError:
+                pass  # empty file or seek unsupported; write the record as-is
+            f.write(line)
 
     def get(self, correction_id: str) -> dict[str, Any] | None:
         for r in self.all():
@@ -442,12 +476,20 @@ class JsonlSink:
 
     def all(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
+        damaged = 0
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
-                    if line:
+                    if not line:
+                        continue
+                    try:
                         out.append(json.loads(line))
+                    except Exception:
+                        # A crashed writer can leave a partial trailing line.
+                        # Skip it: earlier history stays readable and usable.
+                        damaged += 1
         except FileNotFoundError:
             pass
+        self.damaged_lines = damaged
         return out

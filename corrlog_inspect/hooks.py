@@ -83,6 +83,9 @@ class CorrlogReceiptHook(Hooks):
                     os.environ.get(PATH_ENV),
                 )
                 self._sink = None
+        # Log-once guards: identical per-sample failures must not flood logs.
+        self._sign_warned = False
+        self._persist_warned = False
         # The evaluated model per eval, captured at task start (spec.model).
         self._model_by_eval: dict[str, str] = {}
 
@@ -91,7 +94,11 @@ class CorrlogReceiptHook(Hooks):
         # Opt-in: do nothing unless a signing key AND a receipts file are
         # configured. A key alone previously signed and discarded receipts;
         # fully configured means the receipts actually land somewhere.
-        return bool(os.environ.get(KEY_ENV) and os.environ.get(PATH_ENV))
+        # Whitespace-only values are treated as unset (they could never sign
+        # or write a usable receipt).
+        key = os.environ.get(KEY_ENV, "").strip()
+        path = os.environ.get(PATH_ENV, "").strip()
+        return bool(key and path)
 
     async def on_task_start(self, data: TaskStart) -> None:
         # spec.model is the evaluated model string (e.g. "openai/gpt-4o").
@@ -133,15 +140,28 @@ class CorrlogReceiptHook(Hooks):
         try:
             receipt = signer.sign(correction)
         except Exception:
-            # Never let receipt emission break the eval run.
-            logger.exception("corrlog: failed to sign correction receipt")
+            # Never let receipt emission break the eval run. Log the first
+            # failure at ERROR, subsequent identical ones at DEBUG (the cause
+            # is configuration-level and will not change per sample).
+            if not self._sign_warned:
+                self._sign_warned = True
+                logger.exception("corrlog: failed to sign correction receipt")
+            else:
+                logger.debug("corrlog: repeated failure to sign correction receipt")
             return
         if self._sink is not None and receipt is not None:
             try:
                 self._sink.append(receipt)
             except Exception:
-                # Same rule: persistence failure is logged, never raised.
-                logger.exception(
-                    "corrlog: failed to persist receipt to %s",
-                    getattr(self._sink, "path", "sink"),
-                )
+                # Same rule: persistence failure is logged (once), never raised.
+                if not self._persist_warned:
+                    self._persist_warned = True
+                    logger.exception(
+                        "corrlog: failed to persist receipt to %s",
+                        getattr(self._sink, "path", "sink"),
+                    )
+                else:
+                    logger.debug(
+                        "corrlog: repeated failure to persist receipt to %s",
+                        getattr(self._sink, "path", "sink"),
+                    )

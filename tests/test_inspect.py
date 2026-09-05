@@ -269,6 +269,49 @@ def test_persistence_failure_is_non_fatal() -> None:
     _run(hook, _event(_sample({"match": Score(value=INCORRECT)})))
 
 
+def test_enabled_strips_whitespace_values() -> None:
+    """Regression (F3): whitespace-only key or path must NOT enable the hook."""
+    import os
+
+    for val in ("   ", "\t\n", "\u3000"):
+        os.environ["CORRLOG_SIGNING_KEY"] = val
+        os.environ["CORRLOG_RECEIPTS_PATH"] = "/tmp/x.jsonl"
+        assert CorrlogReceiptHook.enabled() is False, f"ws key {val!r} enabled"
+        os.environ["CORRLOG_SIGNING_KEY"] = "a" * 43
+        os.environ["CORRLOG_RECEIPTS_PATH"] = val
+        assert CorrlogReceiptHook.enabled() is False, f"ws path {val!r} enabled"
+    os.environ.pop("CORRLOG_SIGNING_KEY", None)
+    os.environ.pop("CORRLOG_RECEIPTS_PATH", None)
+
+
+def test_broken_sink_logs_once_not_per_sample() -> None:
+    """Regression (F6): identical persistence failures must not spam logs."""
+    import logging
+
+    class BrokenSink:
+        path = "broken"
+        def append(self, record) -> None:
+            raise OSError("disk full")
+
+    signer = FakeSigner()
+    hook = CorrlogReceiptHook(signer=signer, sink=BrokenSink())
+    seen = []
+    class H(logging.Handler):
+        def emit(self, record) -> None:
+            if record.levelno >= logging.ERROR:
+                seen.append(record.getMessage())
+    h = H()
+    logging.getLogger().addHandler(h)
+    logging.getLogger().setLevel(logging.ERROR)
+    try:
+        for _ in range(5):
+            _run(hook, _event(_sample({"match": Score(value=INCORRECT)})))
+    finally:
+        logging.getLogger().removeHandler(h)
+    errs = [m for m in seen if "failed to persist" in m]
+    assert len(errs) == 1, f"expected exactly 1 ERROR, got {len(errs)}"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "corrlog-inspect"
-version = "0.1.1"
+version = "0.1.2"
 description = "Inspect AI extension: emits signed Agent Correction Record (ACR) receipts on INCORRECT eval scores"
 readme = "README.md"
 requires-python = ">=3.10"
