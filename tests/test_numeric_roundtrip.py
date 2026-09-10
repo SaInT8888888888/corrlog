@@ -12,6 +12,9 @@ whenever they hold the same value. This matches RFC 8785 / I-JSON, where JSON
 numbers MUST be expressible as doubles.
 """
 import json
+import math
+import random
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -132,3 +135,66 @@ def test_exact_integers_verify_and_match_their_double_spelling():
         signed, trusted_public = _signed(value)
         assert verify(json.loads(canonical_json(signed)), trusted_public)
         validate_record(json.loads(canonical_json(signed)))
+
+
+def test_canonicalization_roundtrip_fuzz():
+    """Serialise, parse, serialise again must be stable for random finite doubles.
+
+    This is the failure class found in retest: a double whose shortest canonical
+    spelling looks like an integer but is not the exact value of that double, so an
+    exact-equality check rejects a spelling the RFC mandates. Seeded for determinism.
+    """
+    rng = random.Random(8785)
+    private, trusted_public = generate_keypair()
+    checked = 0
+    signed_checked = 0
+    while checked < 5000:
+        bits = rng.getrandbits(64)
+        value = struct.unpack(">d", bits.to_bytes(8, "big"))[0]
+        if not math.isfinite(value):
+            continue
+        checked += 1
+
+        first = canonical_json({"v": value})
+        second = canonical_json(json.loads(first))
+        assert second == first, f"unstable canonicalization for bits {bits:016x}"
+
+        if signed_checked < 200:
+            signed_checked += 1
+            rec = record(agent_id="fuzz", action_type="test", private_key=private,
+                         timestamp="2026-09-10T00:00:00+00:00", metadata={"v": value})
+            assert verify(rec, trusted_public)
+            reparsed = json.loads(canonical_json(rec))
+            assert verify(reparsed, trusted_public), f"round-trip failed for bits {bits:016x}"
+            assert standalone.verify_record(reparsed, trusted_public)[0]
+    assert checked == 5000 and signed_checked == 200
+
+
+# Values whose shortest canonical spelling is NOT the exact mathematical value of
+# their binary64. An exact-equality numeric check rejects these, but the RFC requires
+# the shortest spelling, so they must be accepted and must stay stable on the wire.
+SHORTEST_SPELLING_CASES = [
+    (float(2 ** 68), "295147905179352830000"),          # RFC Appendix B 4430000000000000
+    (999999999999999700000.0, "999999999999999700000"),  # RFC Appendix B 444b1ae4d6e2ef4e
+    (999999999999999900000.0, "999999999999999900000"),  # RFC Appendix B 444b1ae4d6e2ef4f
+    (float(10 ** 18 + 128), "1000000000000000100"),      # adjacent case from retest
+]
+
+
+@pytest.mark.parametrize("value,spelling", SHORTEST_SPELLING_CASES)
+def test_shortest_spelling_is_not_the_exact_double_value(value, spelling):
+    # the exact-equality rule this replaced would reject every one of these
+    assert int(value) != int(spelling)
+    assert canonical_json({"v": value}) == ('{"v":' + spelling + '}').encode()
+
+    # the spelling is stable: parsing it and re-serialising gives the same bytes
+    as_int = json.loads(spelling)
+    assert canonical_json({"v": as_int}) == canonical_json({"v": value})
+
+    # and a signed record survives the round-trip through both verifiers
+    signed, trusted_public = _signed(value)
+    assert verify(signed, trusted_public)
+    reparsed = json.loads(canonical_json(signed))
+    assert verify(reparsed, trusted_public)
+    assert standalone.verify_record(reparsed, trusted_public)[0]
+    assert verify(json.loads(json.dumps(signed)), trusted_public)
