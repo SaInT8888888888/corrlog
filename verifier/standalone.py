@@ -22,19 +22,18 @@ _VALIDATOR = Draft202012Validator(_SCHEMA, format_checker=FormatChecker())
 
 
 def _to_double_domain(value):
-    """Map parsed JSON numbers onto the RFC 8785 / I-JSON numeric domain.
+    """Map parsed JSON numbers onto the binary64 domain.
 
-    A JSON number is an IEEE 754 double. Python parses 10000000000000000 as an
-    ``int`` and 10000000000000000.0 as a ``float``, and both spellings are the
-    same JSON number, so Python's type distinction must not change the verdict
-    (previously it did: a record the core accepted and signed was rejected here
-    once its canonical wire form was re-parsed).
+    All finite parsed JSON numbers use binary64 semantics, including integer
+    literals, matching ECMAScript ``JSON.parse`` and RFC 8785. The shortest
+    canonical spelling of a binary64 can differ from its exact mathematical integer
+    (``float(2**68)`` spells as ``295147905179352830000`` while it is exactly
+    ``295147905179352825856``), so an application-level lossless-integer guard must
+    not be applied to received canonical JSON. Canonicalization remains delegated to
+    the independent rfc8785 library.
 
-    Integers exactly representable as binary64 are normalised to that double
-    before canonicalization. Integers that would need rounding are rejected
-    rather than silently rounded. Canonicalization itself stays delegated to the
-    independent rfc8785 library; its integer-domain restriction is a Python
-    implementation artifact, not an RFC 8785 requirement.
+    Tuples are normalised to arrays so an in-memory record verifies the same way
+    here as in the core, which already treats tuples as JSON arrays.
     """
     if isinstance(value, bool) or value is None:
         return value
@@ -45,27 +44,10 @@ def _to_double_domain(value):
             raise ValueError('integer outside the IEEE 754 double range')
         if not math.isfinite(as_double):
             raise ValueError('integer outside the IEEE 754 double range')
-        if int(as_double) == value:
-            return as_double
-        # RFC 8785 serializes the shortest decimal spelling that round-trips, and
-        # for large values that spelling is not the exact value of the double
-        # (float(2**68) spells as 295147905179352830000, not ...825856). If the
-        # parsed integer IS that spelling then re-serializing the double returns
-        # the same text, so the value does not change and the record must verify.
-        # The spelling is obtained from rfc8785 itself, keeping this independent of
-        # the CorrLog canonicalizer.
-        spelling = rfc8785.dumps(as_double)
-        if isinstance(spelling, bytes):
-            spelling = spelling.decode('ascii')
-        try:
-            if int(spelling) == value:
-                return as_double
-        except ValueError:
-            pass  # exponential spelling, so no integer form to compare against
-        raise ValueError('integer not exactly representable as an IEEE 754 double')
+        return as_double
     if isinstance(value, dict):
         return {k: _to_double_domain(v) for k, v in value.items()}
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         return [_to_double_domain(v) for v in value]
     return value
 
