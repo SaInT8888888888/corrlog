@@ -43,7 +43,7 @@ def test_all_tolerates_partial_trailing_line():
     r, pub = _receipt()
     with tempfile.TemporaryDirectory() as td:
         p = os.path.join(td, "s.jsonl")
-        with open(p, "w") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write(json.dumps(r) + "\n")
             f.write('{"correctionId": "crashed-mid-write", "unterminated')  # no \n
         sink = JsonlSink(p)
@@ -60,7 +60,7 @@ def test_all_tolerates_damaged_middle_line():
     r, _ = _receipt()
     with tempfile.TemporaryDirectory() as td:
         p = os.path.join(td, "s.jsonl")
-        with open(p, "w") as f:
+        with open(p, "w", encoding="utf-8") as f:
             f.write(json.dumps(r) + "\n")
             f.write("NOT JSON AT ALL\n")
             f.write(json.dumps(r) + "\n")
@@ -74,7 +74,7 @@ def test_all_empty_and_missing_file():
     with tempfile.TemporaryDirectory() as td:
         assert JsonlSink(os.path.join(td, "nope.jsonl")).all() == []
         p = os.path.join(td, "empty.jsonl")
-        open(p, "w").close()
+        open(p, "w", encoding="utf-8").close()
         assert JsonlSink(p).all() == []
 
 
