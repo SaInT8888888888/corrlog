@@ -24,9 +24,10 @@ Unicode case alone. It also covers two number classes.
 - Any 0.2.1-signed record whose signed content contains a non-ASCII character, in a
   value **or** a key, will not verify. This includes accented Latin (`café`), CJK
   (`日本語`), emoji and other astral-plane characters, and non-ASCII object keys.
-- Key ordering also changes. 0.2.1 sorted object keys by Unicode code point. RFC 8785
-  requires UTF-16 code unit order. The two agree for BMP keys and diverge as soon as a
-  key lies outside the BMP.
+- Key ordering can also change. 0.2.1 sorted object keys by Unicode code point. RFC 8785
+  requires UTF-16 code unit order. The two orders are identical for keys inside the BMP.
+  They can differ when a non-BMP key is present, depending on the keys it is compared
+  against. The presence of a non-BMP key does not by itself guarantee a different order.
 
 ### 2. Number formats inside signed content
 
@@ -44,13 +45,36 @@ Unicode case alone. It also covers two number classes.
 - 0.2.1 accepted and signed them. Such a value cannot be re-signed by 0.2.2 without
   changing its representation, which is itself a new assertion about the data.
 
+### Measured effect on existing records
+
+Seven representative record shapes were signed with the published `corrlog-core` 0.2.1
+from PyPI, then verified with the built 0.2.2 wheel and with the standalone verifier.
+**Two still verify. Five do not.**
+
+| Record content | Verifies under 0.2.2 |
+|---|---|
+| ASCII-only strings | Yes |
+| Non-ASCII value (`Zürich café`) | No |
+| Non-ASCII object key | No |
+| Non-integral float (`0.1`) | Yes |
+| Integral float (`56.0`) | No |
+| Exponent float (`1e16`) | No |
+| Integer at or above 2^53 | No |
+
+A wider byte-level comparison over 20 shapes gave 11 identical and 9 differing. The
+record-level table above is the more useful measure, because it reflects what a stored
+record actually contains.
+
 ### No silent fallback
 
 - There is no compatibility shim and no automatic migration.
 - Re-signing a legacy record creates a new signed assertion. It does not make the
   original signature conformant, and it cannot restore anything the original did not
   record.
-- Preserve the original receipt archives and the key material that signed them.
+- Preserve the original receipt archives and, critically, the **trusted public keys**.
+  Verification needs the public key that the verifier is asked to trust. The private
+  signing key is not required in order to verify an existing record, and holding it does
+  not make a legacy signature conformant.
 - Verify legacy records with the version that produced them. Verify records newly
   signed under 0.2.2 with any conforming implementation.
 
@@ -113,21 +137,75 @@ Environments that pin dependencies should expect additional transitive packages.
 
 ## Verification in this candidate
 
-Local evidence on Linux, in an independent review of this branch:
+### Cross-platform CI
 
-- Full CI step sequence green on **Python 3.10, 3.11, 3.12 and 3.13** (all 12 steps on
-  each), with **70 tests passing** on every version.
+The draft pull request runs `.github/workflows/ci.yml` on all three operating systems
+across all four supported Python versions. **12 of 12 jobs pass**, conclusion `success`.
+
+| | 3.10 | 3.11 | 3.12 | 3.13 |
+|---|---|---|---|---|
+| Ubuntu | pass | pass | pass | pass |
+| macOS | pass | pass | pass | pass |
+| Windows | pass | pass | pass | pass |
+
+A first run on an earlier revision of this branch failed all four Windows jobs at the new
+full-suite step (`1 failed, 69 passed`). The cause was not a canonicalization defect: the
+test read a JCS fixture with `read_text()` and no encoding, and Windows decodes with the
+locale encoding (cp1252), mangling the non-ASCII bytes in `french.json`. Only that one
+fixture contains raw non-ASCII, which is why exactly one test failed on Windows. Reading
+the same file as UTF-8 reproduces the expected canonical bytes exactly. The same pattern
+in the standalone verifier and the schema loads was a genuine defect and is fixed, with
+the isolation notes below.
+
+### Release packages in fresh environments
+
+The 0.2.2 core wheel and the 0.1.3 Inspect wheel were built from this revision and tested
+in four clean environments:
+
+| Artifact | SHA-256 |
+|---|---|
+| `corrlog_core-0.2.2-py3-none-any.whl` | `a7806502e7f9e10f2dcbae6816bbe7f827c659a21f03c9b654ebdd0e2481f0ec` |
+| `corrlog_inspect-0.1.3-py3-none-any.whl` | `5cec1bd1eeec6ea1f9a1161217b1c88b577c61daeee7e5a5ed077e76a5489274` |
+
+- **Installed packages**: full suite run against the installed wheels, from a test tree
+  containing no package source. **70 passed.** `pip check` clean.
+- **Independent verifier environment**: `rfc8785`, `jsonschema` and `cryptography` only,
+  with CorrLog absent (`find_spec("corrlog_core") is None`). `pip check` clean.
+- **Inspect without core**: `corrlog-inspect` 0.1.3 installs and imports with no core
+  present. `pip check` clean.
+- **Legacy environment**: published `corrlog-core` 0.2.1 installed from PyPI, used to sign
+  the compatibility matrix above. `pip check` clean.
+
+### Standalone verifier behaviour
+
+Run from the environment with no CorrLog installed, against records produced by the
+installed 0.2.2 wheel:
+
+| Case | Exit code | Result |
+|---|---|---|
+| Raw UTF-8 record, trusted key | 0 | PASS, valid under pinned key |
+| Same record with `\uXXXX` escaping | 0 | PASS, valid under pinned key |
+| Raw UTF-8 record, non-UTF-8 default locale | 0 | PASS, valid under pinned key |
+| Wrong trusted key | 1 | FAIL, untrusted signer |
+| Tampered signed field | 1 | FAIL |
+| Tampered metadata | 1 | FAIL |
+| Tampered signature | 1 | FAIL |
+
+Storage escaping and locale do not affect the outcome, which is the intended behaviour:
+the signature covers the parsed object, not the file bytes.
+
+### Independent conformance checks
+
 - RFC 8785 Appendix B number samples: **26/26**, checked against the RFC text directly.
 - Official JCS conformance vectors: **6/6** byte-exact.
 - Differential fuzz against the independent `rfc8785` implementation:
   **99,956 of 100,000** randomized binary64 draws byte-identical, with 44 non-finite
   values correctly rejected.
 - Structural fuzz over nested objects with non-ASCII and astral keys: matched.
-- UTF-16 key ordering with a non-BMP key now correct.
+- UTF-16 key ordering with a non-BMP key: matches the independent implementation.
 - Lone surrogates rejected. Unsafe integers rejected. Safe boundary integers accepted.
-- End-to-end: a record containing non-ASCII content verifies offline with the
-  standalone verifier, and tampering with either a signed field or metadata is rejected.
 
 Finite randomized testing is strong regression evidence, not exhaustive proof over all
-binary64 values. Cross-platform CI (Windows, macOS) runs on the draft pull request and
-its result is reported separately. Local results above are Linux only.
+binary64 values. The compatibility matrix covers seven representative record shapes, not
+every possible record. Local Linux results and the fresh-environment package tests were run
+on the review host; the macOS and Windows results come only from CI.

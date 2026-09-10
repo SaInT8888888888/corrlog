@@ -2,18 +2,120 @@
 
 ## Decision
 
-**0.2.2 is a reviewed remediation candidate, not approved for publication.** Local
-verification supports releasing the narrowly scoped signed-record implementation
-once the updated cross-platform CI passes and the maintainer accepts/discloses the
-legacy-signature compatibility change. **Unqualified production readiness: no.**
-A tamper-evident ledger, automatic replay prevention, guaranteed delivery and
-complete audit history are not implemented. No release, tag or remote push was made.
+**0.2.2 remains a reviewed remediation candidate, not approved for publication.**
+
+Two of the three original release gates are now closed. The cross-platform CI matrix has
+been executed and passes on all three operating systems across all four supported Python
+versions, and the release packages have been built and tested in fresh environments. The
+one gate still open is a maintainer decision: explicit approval of the release and
+disclosure of the legacy-signature compatibility change.
+
+**Unqualified production readiness: no.** A tamper-evident ledger, automatic replay
+prevention, guaranteed delivery and complete audit history are not implemented. No merge,
+tag or PyPI publication has been performed. A branch push and a draft pull request were
+made so that the Windows and macOS CI legs could run.
 
 This review starts from master `b85910dcbd9091cbb80583ca858e4286ecbc3815`, matching
 the handover exactly, on branch `remediation/release-readiness`. The supplied patch
 was inspected and checked against the base before application; it was then revised.
-The authoring machine's live checkout was not available. This repository reproduces
-its supplied patch, not any changes made there after the handover.
+The authoring machine's live checkout was not available to the original review. This
+repository reproduces its supplied patch, not any changes made there after the handover.
+See "Final revision and platform results" below for what has since been added on top.
+
+## Final revision and platform results
+
+Tested code revision: `c0043fe`, the revision the CI matrix and the fresh-environment
+package tests below were run against, on the branch `remediation/release-readiness`
+(draft pull request against `master`, `https://github.com/SaInT8888888888/corrlog/pull/6`).
+Documentation-only commits may sit above it; they change no packaged file, so the wheel
+hashes recorded below remain the tested artifacts. History on top of the base:
+
+- `505832c` code and tests: verification, schema, trust and replay hardening
+- `cfb4ca5` evidence and the original release-readiness report
+- `b38f6e3` `RELEASE_NOTES-0.2.2.md`
+- `f92e510` tests read fixtures as UTF-8 explicitly
+- `c0043fe` verifier inputs and schemas read as UTF-8 explicitly
+
+### Cross-platform CI
+
+`.github/workflows/ci.yml` run `34434986898`, conclusion `success`, **12 of 12 jobs pass**:
+Ubuntu, macOS and Windows, each on Python 3.10, 3.11, 3.12 and 3.13.
+
+An earlier run (`34434602489`, revision `b38f6e3`) passed Linux and macOS and **failed all
+four Windows jobs** at the `Complete suite including release security gates` step, with
+`1 failed, 69 passed`.
+
+Root cause, established rather than assumed: `tests/test_release_security.py` read a JCS
+fixture with `path.read_text()` and no encoding. Windows decodes text with the locale
+encoding, cp1252, which mangled the non-ASCII bytes in `input/french.json` so the
+canonical bytes no longer matched the expected vector. Of the six JCS input fixtures only
+`french.json` contains raw non-ASCII, which is exactly why one test failed on Windows and
+none on Linux or macOS. It was a test portability defect, not a canonicalization defect.
+
+The same pattern appeared in shipped code and was a real defect: the standalone verifier
+read record files and its schema with the locale encoding, so on Windows a valid record
+containing raw non-ASCII would decode to mojibake and the signature check would return a
+**false FAIL**, contradicting the cross-implementation verification claim. Verified against
+the original failing case with a non-UTF-8 default encoding:
+
+```
+before: FAIL: 'ascii' codec can't decode byte 0xc3 in position 354
+after:  PASS valid under pinned key
+```
+
+Both fixes specify UTF-8 explicitly and change no behaviour on Linux or macOS, where UTF-8
+is already the default. `JsonlSink` already specified UTF-8 and was unaffected.
+
+### Release packages in fresh environments
+
+Built from `c0043fe` and installed into four clean environments:
+
+| Artifact | SHA-256 |
+|---|---|
+| `corrlog_core-0.2.2-py3-none-any.whl` | `a7806502e7f9e10f2dcbae6816bbe7f827c659a21f03c9b654ebdd0e2481f0ec` |
+| `corrlog_inspect-0.1.3-py3-none-any.whl` | `5cec1bd1eeec6ea1f9a1161217b1c88b577c61daeee7e5a5ed077e76a5489274` |
+
+- Installed-wheel suite, run from a test tree with no package source present: **70 passed**.
+- Independent verifier environment containing `rfc8785`, `jsonschema` and `cryptography`
+  only, with CorrLog absent: `find_spec("corrlog_core") is None`.
+- Inspect installed without core: imports cleanly with no core present.
+- Published `corrlog-core` 0.2.1 installed from PyPI for the legacy matrix.
+- `pip check` reports no broken requirements in any of the four environments.
+
+### Verifier accept/reject behaviour
+
+Executed from the environment with no CorrLog installed, against records produced by the
+installed 0.2.2 wheel:
+
+| Case | Exit | Result |
+|---|---|---|
+| Raw UTF-8 record under a trusted key | 0 | PASS |
+| Same record with `\uXXXX` escaping | 0 | PASS |
+| Raw UTF-8 record under a non-UTF-8 default locale | 0 | PASS |
+| Wrong trusted key | 1 | FAIL, untrusted signer |
+| Tampered signed field | 1 | FAIL |
+| Tampered metadata | 1 | FAIL |
+| Tampered signature | 1 | FAIL |
+
+### Legacy compatibility, measured
+
+Seven representative record shapes were signed with the published `corrlog-core` 0.2.1
+from PyPI and verified with the built 0.2.2 wheel and the standalone verifier. **Two still
+verify, five do not.**
+
+| Record content | 0.2.2 verdict |
+|---|---|
+| ASCII-only strings | PASS |
+| Non-ASCII value | FAIL |
+| Non-ASCII object key | FAIL |
+| Non-integral float `0.1` | PASS |
+| Integral float `56.0` | FAIL |
+| Exponent float `1e16` | FAIL |
+| Integer at or above 2^53 | FAIL |
+
+This is wider than the Unicode-only framing in the supplied migration evidence. A
+byte-level comparison over 20 shapes gave 11 identical and 9 differing. Disclosure to
+users should cover all three classes: Unicode, number formats, and unsafe integers.
 
 ## Fixes and review of the supplied patch
 
@@ -44,7 +146,8 @@ its supplied patch, not any changes made there after the handover.
 
 Evidence is in `validation/evidence/`. These are local results on macOS arm64,
 Python 3.12. The full Ubuntu/Windows/macOS × Python 3.10–3.13 CI matrix has been
-updated to run the new tests but has not been executed remotely in this task.
+updated to run the new tests. That matrix has since been executed on the draft pull
+request and passes 12 of 12 jobs; see "Final revision and platform results" above.
 
 | Verification | Result | Evidence |
 |---|---|---|
@@ -126,11 +229,17 @@ presented as an all-green acceptance suite.
 
 ## Unresolved blockers and limitations, ranked
 
-1. **Release gate:** run the updated cross-platform/Python CI before publication.
-   Local Python 3.12 results do not establish every supported platform's behavior.
+1. **Release gate (closed):** run the updated cross-platform/Python CI before publication.
+   Done: run `34434986898` passes 12 of 12 jobs on Ubuntu, macOS and Windows across Python
+   3.10 to 3.13. The first attempt failed the Windows legs and exposed a locale-encoding
+   defect, fixed in `f92e510` and `c0043fe`. See "Final revision and platform results".
 2. **Release gate:** explicitly approve the release and disclose 0.2.1 compatibility
    break. Legacy non-ASCII signatures cannot be retroactively made RFC-conformant.
    Preserve archives; re-signing creates a new assertion. No silent fallback exists.
+   Disclosure wording is drafted in `RELEASE_NOTES-0.2.2.md`. Two points to carry into any
+   disclosure: the break also covers number formats and unsafe integers, not Unicode alone
+   (measured: two of seven representative 0.2.1 records still verify), and verification of
+   legacy records requires retaining the trusted **public** keys.
 3. **High if ledger/complete-history assurance is required:** JSONL is not a
    tamper-evident ledger. That product capability is excluded from this release scope.
 4. **High if automatic consumer protection is assumed:** replay state, key
@@ -182,6 +291,18 @@ avoid implying the older installed/published versions provide the corrected beha
 - “Certifies compliance” or “0.2.2 is already available on PyPI”.
 
 ## Reproduction
+
+Release packages were built and tested in fresh environments from revision `c0043fe`:
+
+```sh
+python -m build --outdir wheels .
+python -m build --outdir wheels ./corrlog_inspect
+```
+
+Install both wheels into a clean environment, copy `tests/` and `verifier/` outside the
+source tree, and run `python -m pytest tests -q`. Verifier behaviour is checked with
+`verifier/standalone.py --key <trusted-public-key.json> <record.json>`, which should be run
+from an environment that has `rfc8785`, `jsonschema` and `cryptography` but no CorrLog.
 
 From a checkout of the review branch, using Python 3.12:
 
