@@ -73,14 +73,41 @@ def _jcs_number(value: Any) -> str:
     Differs from Python's ``repr`` in ways that matter for interoperability:
     56.0 renders as ``56``, 1e16 as ``10000000000000000`` (not ``1e+16``) and
     1e-7 as ``1e-7`` (not ``1e-07``).
+
+    Numeric domain policy, applied identically at construction, canonicalization,
+    JSON parsing and verification: a number is accepted when it is exactly
+    representable as an IEEE 754 binary64 value. Python's ``int`` and ``float``
+    are therefore the same JSON number whenever they hold the same value, which is
+    what allows a canonical wire form to be re-parsed and re-verified. Integers
+    that would require rounding are REJECTED rather than rounded, and must be
+    carried as strings. This follows RFC 8785/I-JSON, where JSON numbers MUST be
+    expressible as doubles, rather than Python's arbitrary-precision integers.
     """
     if isinstance(value, bool):  # bool is an int subclass; never a JSON number
         raise TypeError("bool is not a JSON number")
     if isinstance(value, int):
-        if abs(value) < 2 ** 53:  # exactly representable as a double
-            return str(value)
-        raise ValueError("integers outside the safe IEEE 754 range must be strings")
-    x = float(value)
+        return _jcs_integer(value)
+    return _jcs_double(float(value))
+
+
+def _jcs_integer(n: int) -> str:
+    """Serialise an integer exactly representable as a binary64.
+
+    Rejects instead of rounding, so a value never changes silently on the wire.
+    """
+    try:
+        as_double = float(n)
+    except OverflowError:
+        raise ValueError("integer outside the IEEE 754 double range must be a string")
+    if not math.isfinite(as_double) or int(as_double) != n:
+        raise ValueError(
+            "integer not exactly representable as an IEEE 754 double must be a string"
+        )
+    return _jcs_double(as_double)
+
+
+def _jcs_double(x: float) -> str:
+    """ES6 ``Number::toString`` for a binary64 value."""
     if math.isnan(x) or math.isinf(x):
         raise ValueError("Out of range IEEE 754 number cannot be serialized")
     if x == 0.0:
