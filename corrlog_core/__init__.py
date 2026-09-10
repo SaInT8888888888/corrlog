@@ -74,14 +74,18 @@ def _jcs_number(value: Any) -> str:
     56.0 renders as ``56``, 1e16 as ``10000000000000000`` (not ``1e+16``) and
     1e-7 as ``1e-7`` (not ``1e-07``).
 
-    Numeric domain policy, applied identically at construction, canonicalization,
-    JSON parsing and verification: a number is accepted when it is exactly
-    representable as an IEEE 754 binary64 value. Python's ``int`` and ``float``
-    are therefore the same JSON number whenever they hold the same value, which is
-    what allows a canonical wire form to be re-parsed and re-verified. Integers
-    that would require rounding are REJECTED rather than rounded, and must be
-    carried as strings. This follows RFC 8785/I-JSON, where JSON numbers MUST be
-    expressible as doubles, rather than Python's arbitrary-precision integers.
+    Number semantics, adopted from the lifecycle repair: wire-format JSON numbers
+    and ``canonical_json`` use IEEE 754 binary64 semantics, as ECMAScript
+    ``JSON.parse`` and RFC 8785 do. Python integers produced by parsing
+    integer-looking literals are converted to binary64 here. The shortest canonical
+    spelling of a binary64 need not equal its exact mathematical integer
+    (``float(2**68)`` spells as ``295147905179352830000`` while it is exactly
+    ``295147905179352825856``), so comparing a parsed integer against the exact
+    value wrongly rejects valid canonical JSON.
+
+    Precision loss is prevented at the application boundary instead:
+    ``_check_application_numbers`` refuses to sign a Python integer that cannot be
+    represented exactly. Exact decimal quantities and identifiers belong in strings.
     """
     if isinstance(value, bool):  # bool is an int subclass; never a JSON number
         raise TypeError("bool is not a JSON number")
@@ -91,35 +95,41 @@ def _jcs_number(value: Any) -> str:
 
 
 def _jcs_integer(n: int) -> str:
-    """Serialise a JSON number that Python parsed as an ``int``.
+    """Interpret a parsed JSON integer literal in the binary64 number domain.
 
-    Accepts the value when the integer either is the exact mathematical value of
-    its binary64, or is itself the canonical shortest-round-trip spelling of that
-    binary64. The second case is required for RFC 8785 conformance: the shortest
-    spelling of ``float(2**68)`` is ``295147905179352830000``, which is NOT the
-    exact value of the double (``295147905179352825856``), yet it is the spelling
-    the RFC mandates and a conforming implementation produces it.
-
-    Integers that are neither are rejected rather than rounded, so a written value
-    never changes silently on the wire (``2**53 + 1`` still fails).
+    No exactness check belongs here: it rejects the shortest canonical spellings
+    that RFC 8785 requires. Constructor-side precision protection lives in
+    ``_check_application_numbers``.
     """
     try:
         as_double = float(n)
-    except OverflowError:
-        raise ValueError("integer outside the IEEE 754 double range must be a string")
-    if not math.isfinite(as_double):
-        raise ValueError("integer outside the IEEE 754 double range must be a string")
-    spelling = _jcs_double(as_double)
-    if int(as_double) == n:
-        return spelling
-    try:
-        if int(spelling) == n:
-            return spelling
-    except ValueError:
-        pass  # exponential spelling, so no integer form to compare against
-    raise ValueError(
-        "integer not exactly representable as an IEEE 754 double must be a string"
-    )
+    except OverflowError as exc:
+        raise ValueError("integer outside the IEEE 754 double range") from exc
+    return _jcs_double(as_double)
+
+
+def _check_application_numbers(value: Any) -> None:
+    """Protect constructor callers from silently losing arbitrary integer precision.
+
+    This is an application-input guard, not a restriction on parsing canonical wire
+    numbers. Floats are already binary64; exact decimal quantities and identifiers
+    must be supplied as strings when their precision matters.
+    """
+    if isinstance(value, bool):
+        return
+    if isinstance(value, int):
+        try:
+            approximate = float(value)
+        except OverflowError as exc:
+            raise ValueError("application integer must be represented as a string") from exc
+        if not math.isfinite(approximate) or int(approximate) != value:
+            raise ValueError("inexact application integer must be represented as a string")
+    elif isinstance(value, dict):
+        for item in value.values():
+            _check_application_numbers(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _check_application_numbers(item)
 
 
 def _jcs_double(x: float) -> str:
@@ -331,6 +341,11 @@ def record(
     if action_target:
         body["action"]["target"] = action_target
 
+    # Validate dictionary input before its numeric values become opaque hashes.
+    for data in (action_args, action_result):
+        if isinstance(data, dict):
+            _check_application_numbers(data)
+
     # Store hashes of args/result (privacy-preserving) in metadata.
     if action_args is not None:
         body["metadata"]["inputHash"] = _hash_object(
@@ -412,6 +427,8 @@ def retract(
     }
     if fix_note:
         body["fix"]["note"] = fix_note
+    if isinstance(corrected_content, dict):
+        _check_application_numbers(corrected_content)
     if corrected_content is not None:
         body["fix"]["contentHash"] = _hash_object(
             canonical_json(corrected_content)
@@ -481,6 +498,7 @@ def unknown(
 
 
 def _sign(body: dict[str, Any], private_key: ed25519.Ed25519PrivateKey, kid: str) -> None:
+    _check_application_numbers(body)
     body["signature"] = {
         "alg": "Ed25519",
         "kid": kid,

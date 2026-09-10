@@ -113,8 +113,12 @@ def test_jcs_official_and_differential():
         if not math.isfinite(number):continue
         value={'😀':number,'\ue000':[number,'café\n\x00',rng.randrange(-2**53+1,2**53)]}
         assert canonical_json(value)==rfc8785.dumps(value)
-    for invalid in [2**53+1,2**64+1,float('nan'),float('inf'),'\ud800']:
+    for invalid in [float('nan'),float('inf'),'\ud800']:
         with pytest.raises((ValueError,TypeError)):canonical_json(invalid)
+    # Inexact integers are NOT rejected here: the codec gives JSON literals binary64
+    # semantics, so they canonicalize to the double they map to. Rejection belongs at
+    # the application boundary and is asserted in test_numeric_roundtrip.py.
+    assert canonical_json({"v": 2**53+1})==canonical_json({"v": float(2**53+1)})
 
 
 def test_standalone_duplicate_json_members(tmp_path):

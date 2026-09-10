@@ -6,10 +6,10 @@ canonical JSON and parsed back. Python's int/float distinction must not silently
 invalidate a record that was accepted and signed, and genuinely inexact integers
 must be rejected rather than rounded.
 
-Policy under test: a JSON number is accepted when it is exactly representable as
-an IEEE 754 binary64 value, so Python int and float are the same JSON number
-whenever they hold the same value. This matches RFC 8785 / I-JSON, where JSON
-numbers MUST be expressible as doubles.
+Policy under test: wire-format and canonicalization numbers carry binary64
+semantics, so a JSON literal is the double it maps to. Precision loss is refused at
+the application boundary instead: constructors reject inexact Python integer inputs
+before signing. Exact quantities such as money and identifiers belong in strings.
 """
 import json
 import math
@@ -21,7 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from corrlog_core import canonical_json, generate_keypair, record, verify, validate_record
+from corrlog_core import (canonical_json, generate_keypair, record, retract, unknown,
+                          validate_record, verify)
 from verifier import standalone
 
 VERIFIER = Path(__file__).resolve().parent.parent / "verifier" / "standalone.py"
@@ -115,12 +116,43 @@ def test_canonical_wire_form_verifies_through_the_cli(value, tmp_path):
 
 
 @pytest.mark.parametrize("value", INEXACT_INTEGERS)
-def test_inexact_integers_are_rejected_not_rounded(value):
-    with pytest.raises(ValueError):
-        canonical_json({"v": value})
+def test_inexact_integers_are_rejected_at_the_application_boundary(value):
+    """Two sides of one contract, both pinned here.
+
+    The codec interprets a JSON number literal as the binary64 it maps to, matching
+    ECMAScript and RFC 8785, so canonicalization does NOT raise for an inexact
+    integer. Rejection happens where precision would be lost for a caller: the
+    constructors refuse to sign an inexact Python integer. Signing such a value
+    should fail loudly rather than silently storing a rounded number.
+    """
+    assert canonical_json({"v": value}) == canonical_json({"v": float(value)})
     with pytest.raises(ValueError):
         record(agent_id="a", action_type="t", private_key=generate_keypair()[0],
                metadata={"v": value})
+
+
+@pytest.mark.parametrize("value", INEXACT_INTEGERS)
+def test_inexact_integers_rejected_by_every_constructor(value):
+    """Every constructor path refuses inexact integers, including hashed content."""
+    private, _ = generate_keypair()
+    root = record(agent_id="a", action_type="t", private_key=private)
+    builders = [
+        lambda: record(agent_id="a", action_type="x", private_key=private,
+                       metadata={"v": value}),
+        lambda: unknown(agent_id="a", subject="s", private_key=private,
+                        metadata={"v": value}),
+        lambda: retract(prior_record=root, reason="r", trigger="check_failed",
+                        agent_id="a", private_key=private, metadata={"v": value}),
+        lambda: record(agent_id="a", action_type="x", private_key=private,
+                       action_args={"v": value}),
+        lambda: record(agent_id="a", action_type="x", private_key=private,
+                       action_result={"v": value}),
+        lambda: retract(prior_record=root, reason="r", trigger="check_failed",
+                        agent_id="a", private_key=private, corrected_content={"v": value}),
+    ]
+    for build in builders:
+        with pytest.raises(ValueError):
+            build()
 
 
 def test_exact_integers_verify_and_match_their_double_spelling():
