@@ -74,10 +74,11 @@ more useful measure, because it reflects what a stored record actually contains.
 
 Two things are true, and both belong in any disclosure:
 
-1. **For independent verification, nothing that a conforming implementation could verify
-   stops verifying.** Every shape the JavaScript implementation accepts, 0.2.2 also
-   accepts. The four shapes 0.2.2 rejects are ones no conforming implementation could
-   verify, because 0.2.1's canonicalization produced the wrong bytes for them.
+1. **In the seven legacy fixtures tested, 0.2.2's results match the independent
+   JavaScript signature checker.** This is not a general compatibility guarantee. Users
+   of 0.2.1 can still face verification changes, including changes caused by schema
+   enforcement. Preserve original archives and trusted public keys, and assess legacy
+   records before upgrading.
 2. **Users of 0.2.1's own verifier do face a real behaviour change.** 0.2.1's in-library
    verification accepted all seven shapes, including the four whose serialization was
    nonconforming. A record that verified under 0.2.1's own verifier may now fail. That is
@@ -115,12 +116,28 @@ tightened schema could be rejected even with conformant signature bytes.
 ## Numeric domain (single policy, applied everywhere)
 
 One rule now governs numbers at construction, canonicalization, JSON parsing and
-verification: **a JSON number is accepted when it is exactly representable as an IEEE 754
-binary64 value.** Python's `int` and `float` are therefore the same JSON number whenever
-they hold the same value, so a canonical wire form re-parses and re-verifies. Integers that
-would need rounding are rejected rather than rounded and must be carried as strings.
+verification: **a parsed integer is admitted when it is either the exact mathematical value
+of its binary64, or the canonical shortest-round-trip spelling of that binary64.** Python's
+`int` and `float` are therefore the same JSON number whenever they denote the same value,
+and the codec invariant holds:
 
-This replaces the earlier rule, which rejected any Python integer with `|n| >= 2**53`. That
+```
+canonical(parse(canonical(value))) == canonical(value)
+```
+
+Case (b) is not optional. RFC 8785 mandates the shortest decimal spelling that round-trips,
+and for large values that spelling is not the exact value of the double: `float(2**68)`
+spells as `295147905179352830000`, while the double's exact value is
+`295147905179352825856`. An earlier revision of this candidate required exact equality and
+so rejected a spelling the RFC requires, which broke the round-trip for 3 of the 24 finite
+Appendix B samples and for 687 of 99,958 random draws.
+
+An application integer that is neither (a) nor (b) is rejected and must be carried as a
+JSON string. That is a deliberate policy, not rounding: values such as `2**53 + 1` and
+`10**20 + 1` are refused rather than silently changed, so nothing a caller wrote is ever
+altered on the wire.
+
+This replaces the original rule, which rejected any Python integer with `|n| >= 2**53`. That
 rule was applied at canonicalization but not at construction, so the library could accept a
 value such as `1e16`, sign it, write `10000000000000000`, and then reject that same record
 once the JSON was parsed back, because Python re-parses the literal as an `int`. A record

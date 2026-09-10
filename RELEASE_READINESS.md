@@ -147,7 +147,9 @@ users should cover all three classes: Unicode, number formats, and unsafe intege
 | Integral float `56.0` | PASS | FAIL | FAIL |
 | Exponent float `1e16` | PASS | FAIL | FAIL |
 
-0.2.2 agrees with the independent implementation on all seven shapes.
+0.2.2 agrees with the independent implementation on all seven shapes. This is the result for
+these seven fixtures, not a general compatibility guarantee: users of 0.2.1 can still face
+verification changes, including changes caused by schema enforcement.
 
 **Correction to an earlier claim in this report.** A previous revision of this report, and
 of the release notes, stated that the break "removes no capability that was actually
@@ -231,6 +233,48 @@ that `2**53` must be rejected was updated to the corrected policy, with `2**53 +
 `2**64 + 1` retaining rejection.
 
 Suite after the change: **131 passed** (was 70).
+
+### F-01 second round: the first fix was itself incomplete
+
+A further retest of `a683162` showed F-01 partially fixed: signed round-trips of the finite
+RFC 8785 Appendix B samples gave 21 of 24, and 687 of 99,958 canonicalization round-trip
+draws failed.
+
+Reproduced exactly, failing on the three samples named: bits `4430000000000000`
+(`float(2**68)`), `444b1ae4d6e2ef4e` and `444b1ae4d6e2ef4f`.
+
+Cause of the incomplete fix: the corrected numeric rule required
+`int(float(n)) == n` for a parsed integer, which demands that the integer equal the exact
+mathematical value of its binary64. RFC 8785 instead mandates the SHORTEST decimal spelling
+that round-trips, and for `float(2**68)` that spelling is `295147905179352830000` while the
+double's exact value is `295147905179352825856`. The check therefore rejected a spelling the
+RFC requires. The two conditions being conflated are "the integer is not the double's exact
+value" (normal and correct) and "the value would change on the wire" (the actual rejection
+criterion).
+
+Corrected rule, applied in `corrlog_core._jcs_integer` and in the verifier's
+`_to_double_domain`: admit a parsed integer when it is either the double's exact value or
+the canonical shortest-round-trip spelling of that double. Reject only values that would
+change, so `2**53 + 1` and `10**20 + 1` are still refused and nothing is silently rounded.
+The verifier obtains the spelling from `rfc8785` itself, preserving its independence.
+
+Verified after the correction:
+
+| Check | Before | After |
+|---|---|---|
+| Their `test_signed_rfc_roundtrip.py`, installed wheel | 3 failed, 21 passed | **24 passed** |
+| Signed round-trip of the finite Appendix B samples | 21/24 | **24/24** |
+| Their closure fuzz, seed 20260910, 100k draws | 687 failed of 99,958 | **0 failed of 99,958** |
+| Their CLI fixtures (ten files, both forms) | 2 canonical files failed | **all exit 0** |
+| Suite | 131 passed | **224 passed** |
+
+Regression coverage added: `tests/test_appendix_b_roundtrip.py` (76 cases over every finite
+Appendix B sample, including the canonical-file CLI path) and
+`tests/test_chain_serialization.py` (chain and checkpoint survival after canonical and
+ordinary serialization, tamper rejection, and the CLI chain plus checkpoint path), plus the
+shortest-spelling cases in `tests/test_numeric_roundtrip.py`. The fuzz invariant
+`canonical(parse(canonical(value))) == canonical(value)` is asserted in the suite and
+re-checked over 100,000 draws.
 
 ## Fixes and review of the supplied patch
 
