@@ -7,8 +7,7 @@
 Status of the release gates:
 
 1. **Cross-platform CI — closed.** Passes 12 of 12 jobs on Ubuntu, macOS and Windows across
-   Python 3.10 to 3.13, on the revision containing the F-01 numeric fix (`3c2d6ed`, run
-   `34437939325`).
+   Python 3.10 to 3.13, on reconciled revision `2f485cf`, run `34441415484`.
 2. **Packages built and tested in fresh environments — closed.** Wheels built from the tested
    revision, installed into clean environments, suite green, `pip check` clean, verifier
    accept/reject confirmed.
@@ -76,6 +75,13 @@ the adopted contract:
    positive assertion of binary64 equivalence added in their place, with a comment pointing
    at where rejection is now asserted. Non-finite and lone-surrogate rejection is unchanged.
 
+**Independent confirmation of the adopted code**
+
+The independent review of `2f485cf` compared the core, verifier and Inspect executable code in
+this revision with `22b1f88` and found the Python ASTs identical once docstrings are removed.
+The adopted contract was therefore carried over exactly rather than reinterpreted, and the
+package archives built here were independently rebuilt and found member-for-member identical.
+
 ## Evidence provenance
 
 Results are separated by what was measured on which revision, so historical evidence is not
@@ -89,8 +95,10 @@ mistaken for evidence about this revision.
 | Closure fuzz, seed 20260910, 0 failed of 99,958 | reconciled revision | this host |
 | JavaScript differential, 99,962 matched, 0 mismatches | lifecycle repair, re-run confirmed on the reconciled revision | this host, Node 22 |
 | Cross-platform CI, 12 jobs | see the run cited under "Final revision and platform results" | GitHub Actions |
+| Full `validation/run_current.py`, fresh-wheel matrix across five environments, oracle isolation, offline gate, real Inspect CLI | reconciled revision `2f485cf` | independent macOS, Python 3.12, supplied review bundle |
+| Independent review verdict, no new executable-code defect in the scoped release | reconciled revision `2f485cf` | independent review, supplied review bundle |
 | Suite 224 passed, 160 passed | earlier revisions `18058db` and `22b1f88` | this host |
-| Historical core matrix 78/91, Inspect 9/10, offline oracle, adversarial suite, fresh-install matrix | earlier revisions, macOS, Python 3.12 | supplied evidence bundles, hashes verified |
+| Historical core matrix 78/91, Inspect 9/10, offline oracle, adversarial suite, fresh-install matrix | earlier revisions, rerun on the reconciled revision with identical verdicts | supplied evidence bundles, hashes verified |
 | Legacy compatibility matrix, seven fixtures | earlier revisions | this host plus the reviewers' JavaScript checker |
 
 Historical defect analysis is retained below under "Defect history", clearly labelled by
@@ -99,9 +107,10 @@ current revision.
 
 ## Final revision and platform results
 
-Tested code revision: `4e00708`, the revision the CI matrix and the fresh-environment package
-tests below were run against, on the branch `remediation/release-readiness` (draft pull
-request against `master`, `https://github.com/SaInT8888888888/corrlog/pull/6`).
+Reconciled source and package code revision: `4e00708`. Final reviewed revision: `2f485cf`,
+including documentation, with its own successful CI run `34441415484`, on the branch
+`remediation/release-readiness` (draft pull request against `master`,
+`https://github.com/SaInT8888888888/corrlog/pull/6`).
 Documentation-only commits may sit above it; they change no packaged file, so the wheel
 hashes recorded below remain the tested artifacts. History on top of the base:
 
@@ -119,10 +128,10 @@ hashes recorded below remain the tested artifacts. History on top of the base:
 
 ### Cross-platform CI
 
-`.github/workflows/ci.yml` run `34437939325` on revision `3c2d6ed` (the numeric fix):
+`.github/workflows/ci.yml` run `34441415484` on reconciled revision `2f485cf`:
 conclusion `success`, **12 of 12 jobs pass** — Ubuntu, macOS and Windows, each on Python
-3.10, 3.11, 3.12 and 3.13. Run `34434986898` on `c0043fe` passed the same matrix before the
-numeric fix.
+3.10, 3.11, 3.12 and 3.13. Earlier runs `34437939325` on `3c2d6ed` and
+`34434986898` on `c0043fe` are historical evidence only.
 
 An earlier run (`34434602489`, revision `b38f6e3`) passed Linux and macOS and **failed all
 four Windows jobs** at the `Complete suite including release security gates` step, with
@@ -170,6 +179,9 @@ Built from `4e00708` and installed into clean environments:
 - Independent JavaScript canonicalizer: **99,962 cases, 0 mismatches**.
 - Retest fixtures: their 24-case regression and all CLI fixtures, both normal and canonical
   forms, exit 0.
+- Independently rebuilt wheels from this revision are member-for-member identical to the
+  supplied wheels, metadata included, confirming the recorded hashes describe the source
+  revision rather than one build machine.
 - Independent verifier environment containing `rfc8785`, `jsonschema` and `cryptography`
   only, with CorrLog absent: `find_spec("corrlog_core") is None`.
 - Inspect installed without core: imports cleanly with no core present.
@@ -258,7 +270,11 @@ numeric defect was found, why two successive fixes were insufficient, and what e
 established. It is not a description of the reconciled revision. See "Reconciliation" above
 for what the final revision actually contains.
 
-## Final retest round and remediation (2026-09-10)
+## Historical retest and superseded numeric policy (2026-09-10)
+
+The policy and test expectations in this section describe earlier revisions. They
+were superseded by the binary64 wire contract and constructor guard documented
+in the Reconciliation section; they are not the current verification policy.
 
 An independent retest of revision `3c9e27f` raised two findings. Both are accepted and
 addressed in this revision.

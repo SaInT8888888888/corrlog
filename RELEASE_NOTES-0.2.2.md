@@ -226,7 +226,7 @@ Environments that pin dependencies should expect additional transitive packages.
 
 The draft pull request runs `.github/workflows/ci.yml` on all three operating systems
 across all four supported Python versions. **12 of 12 jobs pass**, conclusion `success`,
-on the revision containing the numeric fix (run `34437939325`).
+on reconciled revision `2f485cf` (run `34441415484`).
 
 | | 3.10 | 3.11 | 3.12 | 3.13 |
 |---|---|---|---|---|
@@ -302,7 +302,9 @@ the signature covers the parsed object, not the file bytes.
   values correctly rejected.
 - Structural fuzz over nested objects with non-ASCII and astral keys: matched.
 - UTF-16 key ordering with a non-BMP key: matches the independent implementation.
-- Lone surrogates rejected. Unsafe integers rejected. Safe boundary integers accepted.
+- Lone surrogates rejected. Constructors reject inexact application integers; the
+  codec and verifier interpret received numbers as binary64. Exactly representable
+  integer inputs are accepted by constructors.
 
 Finite randomized testing is strong regression evidence, not exhaustive proof over all
 binary64 values. The compatibility matrix covers seven representative record shapes, not
