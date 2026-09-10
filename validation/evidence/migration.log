@@ -1,0 +1,21 @@
+==============================================================================
+MIGRATION IMPACT: records signed by published 0.2.1, verified by the fixed build
+==============================================================================
+case                                   signed by    verified by  result
+------------------------------------------------------------------------------
+ASCII reason, integer values           0.2.1        fixed        old=True  new=True   compatible
+ASCII reason with a slash/quote        0.2.1        fixed        old=True  new=True   compatible
+non-ASCII: accented text               0.2.1        fixed        old=True  new=False  *** SIGNATURE NO LONGER VALID ***
+non-ASCII: CJK                         0.2.1        fixed        old=True  new=False  *** SIGNATURE NO LONGER VALID ***
+non-ASCII: emoji                       0.2.1        fixed        old=True  new=False  *** SIGNATURE NO LONGER VALID ***
+non-ASCII: micro sign                  0.2.1        fixed        old=True  new=False  *** SIGNATURE NO LONGER VALID ***
+
+==============================================================================
+Same records signed by the FIXED build, verified by the fixed build
+==============================================================================
+ASCII reason, integer values           new-signed=True
+ASCII reason with a slash/quote        new-signed=True
+non-ASCII: accented text               new-signed=True
+non-ASCII: CJK                         new-signed=True
+non-ASCII: emoji                       new-signed=True
+non-ASCII: micro sign                  new-signed=True

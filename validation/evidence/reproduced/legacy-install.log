@@ -1,0 +1,19 @@
+WARNING: The directory '/Users/shanelloyd/Library/Caches/pip' or its parent directory is not owned or is not writable by the current user. The cache has been disabled. Check the permissions and owner of that directory. If executing pip with sudo, you should use sudo's -H flag.
+Collecting corrlog-core==0.2.1
+  Downloading corrlog_core-0.2.1-py3-none-any.whl.metadata (6.3 kB)
+Collecting cryptography>=41.0 (from corrlog-core==0.2.1)
+  Downloading cryptography-50.0.1-cp311-abi3-macosx_11_0_arm64.whl.metadata (4.3 kB)
+Collecting cffi>=2.0.0 (from cryptography>=41.0->corrlog-core==0.2.1)
+  Downloading cffi-2.1.1-cp312-cp312-macosx_11_0_arm64.whl.metadata (2.5 kB)
+Collecting pycparser (from cffi>=2.0.0->cryptography>=41.0->corrlog-core==0.2.1)
+  Downloading pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+Downloading corrlog_core-0.2.1-py3-none-any.whl (22 kB)
+Downloading cryptography-50.0.1-cp311-abi3-macosx_11_0_arm64.whl (4.0 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.0/4.0 MB 16.0 MB/s eta 0:00:00
+Downloading cffi-2.1.1-cp312-cp312-macosx_11_0_arm64.whl (184 kB)
+Downloading pycparser-3.0-py3-none-any.whl (48 kB)
+Installing collected packages: pycparser, cffi, cryptography, corrlog-core
+Successfully installed cffi-2.1.1 corrlog-core-0.2.1 cryptography-50.0.1 pycparser-3.0
+
+[notice] A new release of pip is available: 25.0.1 -> 26.2.1
+[notice] To update, run: /Users/shanelloyd/Documents/Codex/2026-09-10/referenced-chatgpt-conversation-this-is-an/work/reproduced/legacy/bin/python -m pip install --upgrade pip

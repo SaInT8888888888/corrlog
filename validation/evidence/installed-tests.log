@@ -1,0 +1,8 @@
+......................................................................   [100%]
+=============================== warnings summary ===============================
+work/clean/lib/python3.12/site-packages/_pytest/cacheprovider.py:469
+  /Users/shanelloyd/Documents/Codex/2026-09-10/referenced-chatgpt-conversation-this-is-an/work/clean/lib/python3.12/site-packages/_pytest/cacheprovider.py:469: PytestCacheWarning: could not create cache path /Users/shanelloyd/.pytest_cache/v/cache/nodeids: [Errno 1] Operation not permitted: '/Users/shanelloyd/pytest-cache-files-0t_waaii'
+    config.cache.set("cache/nodeids", sorted(self.cached_nodeids))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+70 passed, 1 warning in 3.74s
