@@ -117,6 +117,19 @@ This is wider than the Unicode-only framing in the supplied migration evidence. 
 byte-level comparison over 20 shapes gave 11 identical and 9 differing. Disclosure to
 users should cover all three classes: Unicode, number formats, and unsafe integers.
 
+**What the break costs, measured with an independent implementation.** Each legacy record
+was checked against `rfc8785` plus `cryptography`, with no CorrLog code involved, to ask
+whether a conforming third party could ever have verified it under 0.2.1. The two shapes
+that still verify under 0.2.2 (ASCII-only, non-integral float) are exactly the two an
+independent implementation could verify. All five that break were already unverifiable
+outside 0.2.1, because 0.2.1's non-conformant canonicalization is what produced them. On
+this evidence the compatibility break removes no working capability.
+
+Caveats to carry: the conclusion rests on seven representative shapes rather than an
+exhaustive sweep, and 0.2.2 enforces the record schema at verification time, so a legacy
+record violating the tightened schema could in principle be rejected even with conformant
+signature bytes.
+
 ## Fixes and review of the supplied patch
 
 - Accepted the Unicode escaping/UTF-16 ordering corrections. Rejected silent rounding

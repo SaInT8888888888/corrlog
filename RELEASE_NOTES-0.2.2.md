@@ -65,6 +65,33 @@ A wider byte-level comparison over 20 shapes gave 11 identical and 9 differing. 
 record-level table above is the more useful measure, because it reflects what a stored
 record actually contains.
 
+### What the break actually costs
+
+Each legacy record was also checked against an independent implementation (`rfc8785` plus
+`cryptography`, with no CorrLog code involved) to establish whether a conforming third
+party could ever have verified it under 0.2.1:
+
+| Record content | Third party could verify under 0.2.1 | Verifies under 0.2.2 |
+|---|---|---|
+| ASCII-only strings | Yes | Yes |
+| Non-integral float `0.1` | Yes | Yes |
+| Non-ASCII value | No | No |
+| Non-ASCII object key | No | No |
+| Integral float `56.0` | No | No |
+| Exponent float `1e16` | No | No |
+| Integer at or above 2^53 | No, outside the reference implementation's domain | No |
+
+The two shapes that survive are exactly the two a conforming implementation could verify.
+Every shape that breaks was already unverifiable outside 0.2.1, because 0.2.1's own
+canonicalization was what made it unverifiable. So on the evidence gathered, the
+compatibility break removes no capability that was actually working: it aligns the library
+with the specification, and records that a third party could verify continue to verify.
+
+That conclusion is drawn from seven representative shapes rather than an exhaustive sweep,
+and 0.2.2 also enforces the record schema at verification time, so a legacy record that
+violates the tightened schema could in principle be rejected even with conformant signature
+bytes. Both caveats should be stated alongside the disclosure rather than assumed away.
+
 ### No silent fallback
 
 - There is no compatibility shim and no automatic migration.
