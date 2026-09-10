@@ -502,7 +502,7 @@ def verify_trusted(record: Any, public_key: ed25519.Ed25519PublicKey) -> bool:
     return isinstance(public_key, ed25519.Ed25519PublicKey) and verify(record, public_key)
 
 
-_SCHEMA = json.loads(files("corrlog_core").joinpath("schema/acr-v1.json").read_text())
+_SCHEMA = json.loads(files("corrlog_core").joinpath("schema/acr-v1.json").read_text(encoding="utf-8"))
 _VALIDATOR = Draft202012Validator(_SCHEMA, format_checker=FormatChecker())
 
 

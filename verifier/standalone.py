@@ -16,7 +16,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
-_SCHEMA = json.loads(Path(__file__).with_name('acr-v1.json').read_text())
+_SCHEMA = json.loads(Path(__file__).with_name('acr-v1.json').read_text(encoding='utf-8'))
 _VALIDATOR = Draft202012Validator(_SCHEMA, format_checker=FormatChecker())
 
 
@@ -96,7 +96,7 @@ def _unique_object(pairs):
 
 
 def read_json(path):
-    return json.loads(Path(path).read_text(), object_pairs_hook=_unique_object,
+    return json.loads(Path(path).read_text(encoding='utf-8'), object_pairs_hook=_unique_object,
                       parse_constant=lambda s: (_ for _ in ()).throw(ValueError(s)))
 
 
