@@ -98,20 +98,38 @@ def test_record_rejects_nan_metadata():
         )
 
 
-# ---- F5: lone surrogates must persist, not raise UnicodeEncodeError ----
-def test_sink_persists_lone_surrogates():
+# ---- F5 (revised): lone surrogates are rejected at signing, sink stays safe ----
+def test_lone_surrogates_are_rejected_at_signing():
+    """RFC 8785 3.2.2.2: a compliant JCS implementation MUST terminate with an
+    error on a lone surrogate. It cannot be canonicalized, so it cannot be
+    signed, so it must never reach a sink through the normal path.
+
+    This replaces the earlier F5 test, which asserted the opposite (that a
+    record containing a lone surrogate sign-then-persisted). That behaviour was
+    only possible because canonicalization escaped non-ASCII as \\uXXXX, which
+    is not JCS and made such records unverifiable by conforming third parties.
+    """
     priv, _ = generate_keypair()
     # A genuinely UNPAIRED lone surrogate (high surrogate with no low partner).
-    # json.loads keeps it as-is (unlike a valid pair, which coalesces to the
-    # astral character), so the round-trip must be lossless.
-    r = retract(
-        prior_record=record(agent_id="m", action_type="t", private_key=priv),
-        reason="r", trigger="check_failed", agent_id="m", private_key=priv,
-        metadata={"text": "truncated \ud800 utf16"},
-    )
+    with pytest.raises(ValueError):
+        retract(
+            prior_record=record(agent_id="m", action_type="t", private_key=priv),
+            reason="r", trigger="check_failed", agent_id="m", private_key=priv,
+            metadata={"text": "truncated \ud800 utf16"},
+        )
+
+
+def test_sink_still_survives_a_manually_built_lone_surrogate_record():
+    """Defence in depth: even if a record with a lone surrogate arrives by some
+    other path (hand-built dict, foreign producer), the sink must not raise
+    UnicodeEncodeError and must round-trip losslessly."""
+    rec = {
+        "correctionId": "hand-built",
+        "metadata": {"text": "truncated \ud800 utf16"},
+    }
     with tempfile.TemporaryDirectory() as td:
         p = os.path.join(td, "s.jsonl")
-        JsonlSink(p).append(r)  # must NOT raise UnicodeEncodeError
+        JsonlSink(p).append(rec)  # must NOT raise UnicodeEncodeError
         line = open(p, encoding="utf-8").read()
         assert "\\ud800" in line  # escaped, strict ASCII JSON
         recs = JsonlSink(p).all()

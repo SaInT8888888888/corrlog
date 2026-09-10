@@ -3,7 +3,7 @@
 Framework-independent implementation of the ACR v1.0 spec (see SPEC.md):
 sign, verify, record, retract. Ed25519 over RFC 8785 (JCS) canonical JSON.
 
-The only runtime dependency is `cryptography` (for Ed25519).
+Runtime dependencies: cryptography and jsonschema.
 """
 
 from __future__ import annotations
@@ -11,14 +11,18 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import uuid
+import copy
+from importlib.resources import files
+from jsonschema import Draft202012Validator, FormatChecker
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
 CANONICALIZATION = "RFC8785"
@@ -30,32 +34,148 @@ VALID_SOURCE_TYPES = ("schema", "document", "database", "api", "human", "other")
 # ---------------------------------------------------------------------------
 # Canonical JSON per RFC 8785 (JCS — JSON Canonicalization Scheme)
 # ---------------------------------------------------------------------------
+_JCS_ESCAPES = {
+    0x08: "\\b", 0x09: "\\t", 0x0A: "\\n", 0x0C: "\\f", 0x0D: "\\r",
+    0x22: '\\"', 0x5C: "\\\\",
+}
+
+
+def _jcs_escape_string(s: str) -> str:
+    """RFC 8785 §3.2.2.2 string serialization.
+
+    Only '"', '\\', and U+0000–U+001F are escaped; everything else is emitted
+    as-is (raw UTF-8 in the output). A lone surrogate is an error, as the RFC
+    requires. (The previous implementation used ``ensure_ascii=True``, which
+    escaped every non-ASCII character as ``\\uXXXX``; that is *not* JCS and
+    produces canonical bytes no conforming implementation reproduces.)
+    """
+    out = ['"']
+    for ch in s:
+        o = ord(ch)
+        if o in _JCS_ESCAPES:
+            out.append(_JCS_ESCAPES[o])
+        elif o < 0x20:
+            out.append("\\u%04x" % o)
+        elif 0xD800 <= o <= 0xDFFF:
+            raise ValueError(
+                "cannot canonicalize a lone surrogate; RFC 8785 3.2.2.2 "
+                "requires a compliant implementation to terminate with an error"
+            )
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
+
+
+def _jcs_number(value: Any) -> str:
+    """RFC 8785 §3.2.2.3 number serialization (ES6 ``Number::toString``).
+
+    Differs from Python's ``repr`` in ways that matter for interoperability:
+    56.0 renders as ``56``, 1e16 as ``10000000000000000`` (not ``1e+16``) and
+    1e-7 as ``1e-7`` (not ``1e-07``).
+    """
+    if isinstance(value, bool):  # bool is an int subclass; never a JSON number
+        raise TypeError("bool is not a JSON number")
+    if isinstance(value, int):
+        if abs(value) < 2 ** 53:  # exactly representable as a double
+            return str(value)
+        raise ValueError("integers outside the safe IEEE 754 range must be strings")
+    x = float(value)
+    if math.isnan(x) or math.isinf(x):
+        raise ValueError("Out of range IEEE 754 number cannot be serialized")
+    if x == 0.0:
+        return "0"
+
+    r = repr(x)
+    neg = r.startswith("-")
+    if neg:
+        r = r[1:]
+    if "e" in r:
+        mant, _, exp = r.partition("e")
+        exp = int(exp)
+        digits = mant.replace(".", "")
+        n = (mant.index(".") if "." in mant else len(mant)) + exp
+    elif "." in r:
+        int_part, frac = r.split(".")
+        digits = int_part + frac
+        n = len(int_part)
+    else:
+        digits, n = r, len(r)
+
+    lead = len(digits) - len(digits.lstrip("0"))
+    digits = digits.lstrip("0") or "0"
+    n -= lead
+    digits = digits.rstrip("0") or "0"
+    k = len(digits)
+
+    if k <= n <= 21:
+        s = digits + "0" * (n - k)
+    elif 0 < n <= 21:
+        s = digits[:n] + "." + digits[n:]
+    elif -6 < n <= 0:
+        s = "0." + "0" * (-n) + digits
+    elif k == 1:
+        s = digits + "e" + ("+" if n - 1 >= 0 else "-") + str(abs(n - 1))
+    else:
+        s = digits[0] + "." + digits[1:] + "e" + ("+" if n - 1 >= 0 else "-") + str(abs(n - 1))
+    return ("-" if neg else "") + s
+
+
+def _jcs_render(obj: Any, out: list[str]) -> None:
+    if obj is None:
+        out.append("null")
+    elif obj is True:
+        out.append("true")
+    elif obj is False:
+        out.append("false")
+    elif isinstance(obj, str):
+        out.append(_jcs_escape_string(obj))
+    elif isinstance(obj, (int, float)):
+        out.append(_jcs_number(obj))
+    elif isinstance(obj, dict):
+        out.append("{")
+        for i, key in enumerate(sorted(obj, key=_jcs_sort_key)):
+            if not isinstance(key, str):
+                raise TypeError("JSON object keys must be strings")
+            if i:
+                out.append(",")
+            out.append(_jcs_escape_string(key))
+            out.append(":")
+            _jcs_render(obj[key], out)
+        out.append("}")
+    elif isinstance(obj, (list, tuple)):
+        out.append("[")
+        for i, item in enumerate(obj):
+            if i:
+                out.append(",")
+            _jcs_render(item, out)
+        out.append("]")
+    else:
+        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _jcs_sort_key(key: str) -> bytes:
+    """RFC 8785 §3.2.3: sort object keys by UTF-16 code units.
+
+    Python's default ``sorted()`` compares by Unicode code point, which orders
+    astral-plane keys differently from UTF-16 and so diverges from JCS on any
+    object with a non-BMP key.
+    """
+    return key.encode("utf-16-be", "surrogatepass")
+
+
 def canonical_json(obj: dict[str, Any]) -> bytes:
     """Return RFC 8785 (JCS) canonical bytes.
 
-    RFC 8785 requires: recursive key sort by UTF-16 code unit order, no
-    insignificant whitespace, and specific string escaping — control
-    characters and non-ASCII MUST be escaped as ``\\uXXXX``/surrogate pairs so
-    every conforming implementation (Python, Rust, Go, TS) produces
-    byte-identical output. Python's ``json.dumps`` with ``ensure_ascii=True``
-    and ``separators=(",", ":")`` satisfies this for strings; numbers MUST be
-    serialized per RFC 8785 §3.2.3 (ES6 Number::toString) — this reference
-    avoids the float ambiguity by representing non-integer values as strings
-    (see `record`/`retract`), matching AAR's practice.
+    Recursive key sort by UTF-16 code unit order, RFC 8785 string escaping
+    (non-ASCII emitted raw, not ``\\uXXXX``), ES6 number serialization, no
+    insignificant whitespace, UTF-8 output. Validated against all six official
+    JCS conformance vectors (cyberphone/json-canonicalization) and byte-compared
+    against an independent implementation (``rfc8785``) over randomized inputs.
     """
-    def _sorted(o: Any) -> Any:
-        if isinstance(o, dict):
-            # sort_keys sorts by Unicode code point, which matches UTF-16
-            # code unit order for the BMP (all keys here are ASCII-safe).
-            return {k: _sorted(v) for k, v in sorted(o.items())}
-        if isinstance(o, list):
-            return [_sorted(v) for v in o]
-        return o
-
-    return json.dumps(
-        _sorted(obj), separators=(",", ":"), ensure_ascii=True, sort_keys=True,
-        allow_nan=False,
-    ).encode("utf-8")
+    out: list[str] = []
+    _jcs_render(obj, out)
+    return "".join(out).encode("utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -85,8 +205,15 @@ def load_private_key(seed: str) -> ed25519.Ed25519PrivateKey:
     """
     s = seed.strip()
     if s.startswith(("sk_", "priv_", "ed25519:")):
-        # allow a small prefix for readability; strip it
-        s = s.split(":", 1)[-1] if ":" in s else s[2:] if s.startswith("sk_") else s[5:]
+        # allow a small prefix for readability; strip it. (The previous version
+        # stripped only 2 characters for "sk_", which corrupted the seed and made
+        # the documented sk_ prefix unusable.)
+        if s.startswith("ed25519:"):
+            s = s.split(":", 1)[1]
+        elif s.startswith("priv_"):
+            s = s[5:]
+        else:
+            s = s[3:]
     try:
         raw = base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
     except Exception:
@@ -154,7 +281,7 @@ def record(
         "trigger": "supersede",  # placeholder; corrected on retract
         "fix": {"type": "noop"},
         "timestamp": ts,
-        "metadata": metadata or {},
+        "metadata": copy.deepcopy(metadata) if metadata is not None else {},
     }
     if agent_name:
         body["agent"]["name"] = agent_name
@@ -172,6 +299,7 @@ def record(
         )
 
     _sign(body, private_key, kid)
+    validate_record(body)
     return body
 
 
@@ -201,10 +329,8 @@ def retract(
     canonical bytes - not just an id - so the chain is verifiable offline.
 
     `source_type` + `source_reference` record WHERE the correct value came from
-    (schema, document, database, api, human, other). This is the trust field:
-    it turns "the value changed" into "the value changed, and here is the proof
-    of where the correct value lives". Without it a correction is just an
-    assertion that a new value is right - with it, the correction is verifiable.
+    (schema, document, database, api, human, other). These are signed assertions;
+    consumers must independently check the reference and its correctness.
 
     ``correction_id`` and ``timestamp`` are OPTIONAL and exist for deterministic
     test vectors (reproducible records, cross-implementation verification).
@@ -239,7 +365,7 @@ def retract(
         "trigger": trigger,
         "fix": {"type": fix_type},
         "timestamp": ts,
-        "metadata": metadata or {},
+        "metadata": copy.deepcopy(metadata) if metadata is not None else {},
     }
     if fix_note:
         body["fix"]["note"] = fix_note
@@ -253,6 +379,7 @@ def retract(
         body["fix"]["source"] = {"type": source_type, "reference": source_reference}
 
     _sign(body, private_key, kid)
+    validate_record(body)
     return body
 
 
@@ -300,12 +427,13 @@ def unknown(
         "subject": subject,
         "note": note or "",
         "timestamp": ts,
-        "metadata": metadata or {},
+        "metadata": copy.deepcopy(metadata) if metadata is not None else {},
     }
     if agent_name:
         body["agent"]["name"] = agent_name
 
     _sign(body, private_key, kid)
+    validate_record(body)
     return body
 
 
@@ -329,69 +457,118 @@ def verify(record: dict[str, Any], public_key: ed25519.Ed25519PublicKey | None =
     """Verify an ACR record's Ed25519 signature.
 
     If `public_key` is None, the key embedded in `record["signature"]["publicKey"]`
-    is used (self-authenticating). Pass a key explicitly to pin trust to a known key.
+    is used for signature consistency ONLY, not signer trust. Prefer verify_trusted
+    with an independently established key for security decisions.
     """
-    sig_meta = record.get("signature") or {}
-    if sig_meta.get("alg") != "Ed25519":
+    if not isinstance(record, dict):
         return False
-    if sig_meta.get("canonicalization") != CANONICALIZATION:
-        return False
-
-    sig_b64 = sig_meta.get("sig") or ""
-    if not sig_b64:
-        return False
-
     try:
-        sig_bytes = base64.urlsafe_b64decode(sig_b64 + "=" * (-len(sig_b64) % 4))
-    except Exception:
-        return False
-
-    if public_key is None:
-        pk_b64 = sig_meta.get("publicKey") or record.get("agent", {}).get("publicKey")
-        if not pk_b64:
+        validate_record(record)
+        sig_meta = record["signature"]
+        embedded = load_public_key(sig_meta["publicKey"])
+        if record["agent"].get("publicKey", sig_meta["publicKey"]) != sig_meta["publicKey"]:
             return False
-        try:
-            raw = base64.urlsafe_b64decode(pk_b64 + "=" * (-len(pk_b64) % 4))
-            public_key = ed25519.Ed25519PublicKey.from_public_bytes(raw)
-        except Exception:
+        if public_key is not None and public_key_b64url(public_key) != public_key_b64url(embedded):
             return False
-
-    # Re-canonicalize with sig removed.
-    payload = {k: v for k, v in record.items() if k != "signature"}
-    payload["signature"] = {**sig_meta, "sig": ""}
-
-    try:
-        public_key.verify(sig_bytes, canonical_json(payload))
+        key = public_key if public_key is not None else embedded
+        sig_bytes = _decode_exact(sig_meta["sig"], 64)
+        payload = {**record, "signature": {**sig_meta, "sig": ""}}
+        key.verify(sig_bytes, canonical_json(payload))
         return True
-    except InvalidSignature:
-        return False
     except Exception:
         return False
 
 
-def verify_chain(records: list[dict[str, Any]], public_key: ed25519.Ed25519PublicKey | None = None) -> bool:
-    """Verify a chain of records: each signature valid, and each correction's
-    `supersedes.digest` matches the canonical bytes of the prior record."""
-    for i, rec in enumerate(records):
-        if not verify(rec, public_key):
+def _decode_exact(value: str, size: int) -> bytes:
+    if not isinstance(value, str):
+        raise ValueError("expected unpadded base64url string")
+    raw = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
+    if len(raw) != size or _b64url(raw) != value:
+        raise ValueError("invalid length or noncanonical base64url")
+    return raw
+
+
+def load_public_key(value: str) -> ed25519.Ed25519PublicKey:
+    """Decode an independently provisioned, unpadded base64url public key.
+
+    Decoding is not trust establishment. Obtain this value through an authenticated
+    channel and bind it to the expected signer before inspecting received records.
+    """
+    return ed25519.Ed25519PublicKey.from_public_bytes(_decode_exact(value, 32))
+
+
+def verify_trusted(record: Any, public_key: ed25519.Ed25519PublicKey) -> bool:
+    """Fail closed without an explicitly supplied trusted Ed25519 public key."""
+    return isinstance(public_key, ed25519.Ed25519PublicKey) and verify(record, public_key)
+
+
+_SCHEMA = json.loads(files("corrlog_core").joinpath("schema/acr-v1.json").read_text())
+_VALIDATOR = Draft202012Validator(_SCHEMA, format_checker=FormatChecker())
+
+
+def validate_record(record: Any) -> None:
+    """Raise ValueError for invalid record structure, formats, or JSON values."""
+    try:
+        _VALIDATOR.validate(record)
+        canonical_json(record)
+    except Exception as exc:
+        raise ValueError("invalid ACR record") from exc
+
+
+def chain_checkpoint(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Describe a chain; NOT a trust-establishment or signing operation.
+
+    A trusted producer must distribute and retain this checkpoint separately.
+    A checkpoint received alongside an untrusted chain establishes nothing.
+    """
+    if not verify_chain(records):
+        raise ValueError("invalid correction chain")
+    return {"length": len(records), "genesis": _hash_object(canonical_json(records[0]))["digest"],
+            "head": _hash_object(canonical_json(records[-1]))["digest"]}
+
+
+def verify_chain(records: list[dict[str, Any]], public_key: ed25519.Ed25519PublicKey | None = None,
+                 *, checkpoint: dict[str, Any] | None = None) -> bool:
+    """Check a rooted linear correction chain, including unique IDs and links.
+
+    Without a separately trusted checkpoint, a valid prefix is accepted: this
+    proves link consistency, not complete history or JSONL file integrity.
+    A checkpoint requires a trusted key and binds length, genesis and head.
+    """
+    try:
+        if not isinstance(records, list) or not records:
             return False
-        if i == 0:
-            continue
-        sup = rec.get("supersedes")
-        if not sup:
-            # A chain where a later record doesn't supersede is broken.
-            return False
-        expected_digest = sup.get("digest", {}).get("digest")
-        if not expected_digest:
-            return False
-        actual_digest = _b64url(hashlib.sha256(canonical_json(records[i - 1])).digest())
-        if actual_digest != expected_digest:
-            return False
-    return True
+        seen = set()
+        for i, rec in enumerate(records):
+            if not verify(rec, public_key) or rec["correctionId"] in seen:
+                return False
+            seen.add(rec["correctionId"])
+            if i == 0:
+                if "supersedes" in rec:
+                    return False
+            else:
+                sup = rec.get("supersedes", {})
+                if sup.get("receiptId") != records[i-1]["correctionId"]:
+                    return False
+                if sup.get("digest") != _hash_object(canonical_json(records[i-1])):
+                    return False
+        if checkpoint is not None:
+            if not isinstance(public_key, ed25519.Ed25519PublicKey):
+                return False
+            if not isinstance(checkpoint, dict) or type(checkpoint.get("length")) is not int:
+                return False
+            expected = {"length": len(records),
+                        "genesis": _hash_object(canonical_json(records[0]))["digest"],
+                        "head": _hash_object(canonical_json(records[-1]))["digest"]}
+            if checkpoint != expected:
+                return False
+        return True
+    except Exception:
+        return False
 
 
 def tamper_evident(record: dict[str, Any]) -> bool:
-    """True if any mutation of the signed body invalidates the signature."""
+    """Compatibility signature-consistency check; does not establish signer trust."""
     # A record is tamper-evident by construction; this checks the signature
     # still holds for the current body (i.e. it has NOT been mutated).
     return verify(record)
@@ -413,26 +590,27 @@ class MemorySink:
         self._records: list[dict[str, Any]] = []
 
     def append(self, record: dict[str, Any]) -> None:
-        self._records.append(record)
+        if any(r.get("correctionId") == record.get("correctionId") for r in self._records):
+            raise ValueError("duplicate correctionId")
+        self._records.append(copy.deepcopy(record))
 
     def get(self, correction_id: str) -> dict[str, Any] | None:
         for r in self._records:
             if r.get("correctionId") == correction_id:
-                return r
+                return copy.deepcopy(r)
         return None
 
     def all(self) -> list[dict[str, Any]]:
-        return list(self._records)
+        return copy.deepcopy(self._records)
 
 
 class JsonlSink:
-    """Append-only JSONL file sink — durable, hash-chained by file order.
+    """JSONL transport sink. No ledger integrity, uniqueness or replay guarantee.
 
     Durability contract (exact, no stronger claim):
-      * each ``append`` performs one write of one complete JSON line; on POSIX
-        regular files opened O_APPEND each single write() is atomic against
-        other writers, so concurrent appends from several processes do not
-        interleave (verified at 8 processes / 150KB lines);
+      * each ``append`` submits one complete JSON line to an O_APPEND file;
+        concurrent append behavior depends on the filesystem and platform.
+        This is not an integrity, exactly-once or universal atomicity guarantee;
       * there is NO fsync: a process crash (SIGKILL, power loss) can lose the
         most recent writes still in the page cache, and a write killed
         mid-record can leave a PARTIAL trailing line;
@@ -452,7 +630,7 @@ class JsonlSink:
     def append(self, record: dict[str, Any]) -> None:
         # ensure_ascii=True so lone surrogates in content are escaped to
         # \uXXXX and can never raise UnicodeEncodeError or corrupt the line
-        # (matches the canonicalisation path, which is also ASCII-escaped).
+        # Storage escaping is separate from RFC 8785 signing canonicalization.
         # Binary mode: the record is encoded first and written as one
         # contiguous block, so on POSIX O_APPEND files each append stays
         # atomic against other concurrent appenders.
@@ -471,7 +649,7 @@ class JsonlSink:
     def get(self, correction_id: str) -> dict[str, Any] | None:
         for r in self.all():
             if r.get("correctionId") == correction_id:
-                return r
+                return copy.deepcopy(r)
         return None
 
     def all(self) -> list[dict[str, Any]]:

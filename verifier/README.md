@@ -1,50 +1,27 @@
-# Verifier — independent verification of ACR records
+# Offline verification without CorrLog imports
 
-This directory contains a **standalone verifier** that shares *no code* with the
-corrlog SDK. It exists so a third party can check our claims without importing our
-library — the difference between "trust us, it verifies" and "here, verify it yourself."
+Distribute `standalone.py` and `acr-v1.json` together. Install `cryptography`,
+`rfc8785`, and `jsonschema[format-nongpl]` in a fresh environment without CorrLog.
+The verifier implements signature and chain verification separately from the core
+and uses Trail of Bits' RFC 8785 implementation. It shares the published schema,
+not the core's verification or canonicalization code.
 
-## What's here
-
-- `standalone.py` — reimplements RFC 8785 (JCS) canonicalization + Ed25519 verify +
-  the supersedes hash-chain walk, from the spec text alone. Imports only stdlib +
-  `cryptography`. ~200 lines, readable in one sitting.
-- `generate_vectors.py` — uses the corrlog SDK to produce deterministic, frozen test
-  vectors (fixed key seed, fixed ids/timestamps) into `vectors/`.
-- `vectors/` — the frozen vectors:
-  - `key.json` — the public key.
-  - `action.json` — a signed action record.
-  - `correction.json` — a signed correction superseding it.
-  - `tampered.json` — the action record with the signed body mutated (MUST FAIL).
-  - `wrong_key.json` — a record signed by a different key (MUST FAIL when pinned).
-
-## How a third party checks us
-
-```bash
-# 1. Verify the action record's signature
-python3 verifier/standalone.py verifier/vectors/action.json
-
-# 2. Verify the full correction chain (action -> correction)
-python3 verifier/standalone.py --chain verifier/vectors/action.json verifier/vectors/correction.json
-
-# 3. Confirm a tampered record is rejected
-python3 verifier/standalone.py verifier/vectors/tampered.json   # must FAIL
-
-# 4. Confirm a wrong-key substitution is rejected when trust is pinned
-python3 verifier/standalone.py --key verifier/vectors/key.json verifier/vectors/wrong_key.json
-# must FAIL
+```sh
+python standalone.py --key trusted-key.json record.json
+python standalone.py --key trusted-key.json --chain --checkpoint trusted-head.json root.json correction.json
 ```
 
-## Why the `--key` flag matters
+Provision trusted-key.json (`{"publicKey":"<unpadded-base64url>"}`) through an
+authenticated operator channel. Never derive it from the record being inspected.
+Likewise retain the expected latest checkpoint through an independent trusted path.
+A sender-supplied key/checkpoint establishes neither attribution nor completeness.
 
-Without pinning, the verifier trusts the key embedded in the record (self-authenticating).
-That is convenient but vulnerable to **key substitution**: an attacker signs a record with
-their own key and embeds that key. A self-authenticating check accepts it. Pinning to the
-known key (`key.json`) rejects it. A serious audit pins trust to a known key — this is the
-same reason TLS pins CAs and SSH shows host-key fingerprints.
+`--signature-only` explicitly checks consistency under an embedded key; it cannot
+establish trusted origin. Without a checkpoint, a valid chain prefix passes. JSONL
+file order is not a chain. Exit 0 means the requested checks passed; malformed,
+wrong-key or tampered records exit nonzero. Parsing rejects duplicate JSON members.
 
-## The point
-
-If our SDK ever produced a bad signature, `standalone.py` — which shares no code with it —
-would reject it. The two agreeing on frozen vectors is the cross-implementation proof that
-the signatures are real, not self-referential.
+Historical vectors are examples with public test seeds, not production identities.
+Version 0.2.1 canonicalization was nonconforming; the corrected verifier may reject
+its records. Do not interpret agreement between two in-tree tools as independent
+proof of every assumption. See SECURITY.md and RELEASE_READINESS.md.

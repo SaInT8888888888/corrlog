@@ -1,80 +1,58 @@
-# Security Model — Signature Validity and Signer Trust
+# Security and trusted verification
 
-This note documents the trust boundary of Agent Correction Records (ACRs), a
-key-substitution weakness found while building an independent verifier, and the
-mitigation now required by the spec. It is deliberately narrow: it describes what
-verification does and does not establish, so that anyone consuming an ACR knows what a
-passing check actually proves.
+Use `verify_trusted(record, trusted_key)` for a trust decision. Provision the expected
+operator public key over an authenticated channel before receiving records. Bind the
+key to an operator and permitted agent/principal identifiers in application policy.
+Verify its fingerprint with the operator through an independent authenticated channel.
+Store the key in configuration an attacker supplying records cannot modify. Never
+copy a received record's embedded key into the trusted-key configuration.
 
-## Two distinct properties
+`verify(record)` is a compatibility API for schema and signature consistency only.
+Anyone can create a key pair and produce a record that passes that check. Signatures
+attribute assertions to a key, not automatically to a human, model, or organization.
+A pinned operator can still assert false agent IDs, reasons, sources and timestamps.
 
-Verifying an ACR involves two separate questions that must not be conflated:
+The standalone CLI requires `--key trusted-key.json`, or an explicit
+`--signature-only` opt-out from trust verification. It imports no corrlog code and
+uses the third-party rfc8785 library. The bundled schema is shared format data;
+independence of verification code is not independence of the specification or trust policy.
 
-1. **Signature validity** — is this record internally consistent, and does its signature
-   match the public key presented with it? This is self-contained and checkable offline
-   with no external state.
-2. **Authenticity / trust** — was this record signed by a party the verifier has
-   independent reason to trust? This cannot be answered by the record alone.
+Protect private keys and define rotation/revocation outside CorrLog. Retain old public
+keys with an authenticated policy describing which historical records they authorize.
+There is no built-in revocation service, secure clock, key discovery or time-of-signing
+proof. A stolen trusted signing key can produce accepted false records.
 
-A record can be signature-valid and still untrustworthy. Treating (1) as if it answered (2)
-is the core mistake described below.
+## Completeness and replay
 
-## The finding: key substitution
+JSONL storage has no ledger-integrity guarantee. Per-record signatures do not detect
+missing lines, reordered lines or replacement with other valid signed records.
+Correction-chain verification checks a rooted linked sequence. A trusted checkpoint
+and pinned key are necessary to detect suffix truncation relative to an expected head.
+Checkpoint freshness and anti-rollback state are the consumer's responsibility.
 
-Early verification was *self-authenticating*: the verifier trusted the public key embedded
-in the record and checked the signature against that same key.
+ReplayGuard provides persistent unique-ID admission through a protected shared SQLite
+database. It is optional and not used automatically by JSONL or Inspect. Do not delete,
+restore or independently duplicate this state and expect replay protection to persist.
+There is no exactly-once side-effect guarantee or semantic deduplication of fresh IDs.
 
-This accepts a forged record. An attacker constructs any record they like, signs it with a
-key they control, and embeds that key alongside the signature. The signature is valid *for
-the embedded key*, so a self-authenticating verifier accepts it. The check confirms only
-that whoever wrote the record also signed it — which is trivially true for any author,
-honest or not.
+## Input and operational limits
 
-This surfaced when an ACR signed by an attacker-controlled key passed the standalone
-verifier. It was not caught by the SDK's own tests, because the SDK and its in-tree
-verifier shared the same assumption. An implementation that shares no code with the SDK —
-reimplementing the spec from its text alone — was required to expose it. This is the
-general reason a spec's guarantees should be validated by an independent implementation,
-not only by the reference code.
+Verification rejects malformed dictionary inputs without raising. The standalone JSON
+reader rejects duplicate members and nonfinite constants. Applications parsing JSON
+before invoking dictionary APIs must reject duplicate members themselves. Enforce
+request size/depth and resource limits outside this library; unbounded hostile inputs
+can exhaust CPU or memory. Schema extensions are allowed and signed.
 
-## The mitigation: key pinning
+Inspect hook failures are logged and do not fail the evaluation. enabled() indicates
+configuration and import availability, not guaranteed receipt delivery. Monitor errors
+and reconcile expected samples externally. Inspect retains signed subject_ref metadata,
+but does not persist the superseded action record; its receipt file is not a chain.
 
-Trust must be anchored to a public key the verifier already holds, supplied out of band
-rather than read from the record under inspection. The verifier is given one or more
-expected public keys (the `--key` pin) and rejects any record not signed by a pinned key,
-regardless of whether the record's own signature is internally valid.
+## Legacy data
 
-This is the same pattern as pinning a TLS chain to a known set of certificate authorities,
-or verifying an SSH host by a previously recorded key fingerprint: the signature math is
-necessary but not sufficient; trust derives from a prior, independent commitment to a
-specific key.
+Version 0.2.1 used non-RFC-8785 serialization. Updated verification intentionally does
+not silently accept those nonconforming signatures. Preserve legacy evidence and label
+its verification method explicitly. Do not overwrite history with re-signed records.
 
-With pinning, the substituted-key record correctly fails: its signature is valid for its
-embedded key, but that key is not pinned, so verification rejects it.
-
-## What a passing verification proves
-
-A verification that passes against a pinned key establishes:
-
-- **Integrity** — the record has not been altered since signing.
-- **Attribution** — it was signed by the holder of the pinned key.
-- **Chain consistency** — within a presented sequence, records are hash-linked in order
-  with no undetected edits or reordering.
-
-It does **not** establish:
-
-- **Completeness** — that every relevant event was recorded. A key-holder can decline to
-  write a record; a signed log proves nothing about what was never entered into it.
-  Bounding this gap requires mechanisms outside signing — external anchoring, independent
-  co-signers, and counterparty reconciliation — documented separately in SPEC.md §9.
-- **Correctness of content** — that the recorded claim is true; only that the pinned
-  key-holder asserted it.
-
-Attribution and completeness are independent problems. Key pinning closes the attribution
-gap. It does not touch the completeness gap, and no signature scheme can.
-
-## Reporting
-
-Security issues can be reported by opening an issue on the repository or contacting the
-maintainer directly. Please do not disclose a suspected verification bypass publicly until
-a fix is available.
+Report suspected vulnerabilities privately to the maintainer where possible; avoid
+publishing exploitable details before a fix is available.

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "corrlog-inspect"
-version = "0.1.2"
+version = "0.1.3"
 description = "Inspect AI extension: emits signed Agent Correction Record (ACR) receipts on INCORRECT eval scores"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,11 +13,11 @@ license = { text = "MIT" }
 # hard dependency. corrlog-core is only needed at signing time (imported
 # lazily inside CorrlogSigner.sign), so it ships as the optional `core` extra.
 dependencies = ["inspect-ai>=0.3"]
-# Pinned >=0.2.0: corrlog-core 0.1.x bundled this module inside the core
+# Core >=0.2.2 includes canonicalization and schema remediation. Previously: corrlog-core 0.1.x bundled this module inside the core
 # distribution; 0.2.0+ is the clean split where corrlog-inspect is the sole
 # owner of the corrlog_inspect package.
 [project.optional-dependencies]
-core = ["corrlog-core>=0.2.0"]
+core = ["corrlog-core>=0.2.2"]
 
 [project.entry-points.inspect_ai]
 corrlog_inspect = "corrlog_inspect"

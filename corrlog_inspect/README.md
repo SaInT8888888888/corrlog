@@ -58,9 +58,18 @@ inspect eval your_task.py --model ...
 
 With both variables set, `enabled()` returns true, Inspect discovers the hook
 through the `inspect_ai` entry point, and every failing sample produces a
-signed receipt that is appended to the file at `CORRLOG_RECEIPTS_PATH` — one
-receipt per failing sample, durable and hash-chained by file order. A sample
+signed receipt that is appended to the file at `CORRLOG_RECEIPTS_PATH`: one
+receipt per failing sample, durable, each independently verifiable. A sample
 that scores correct produces nothing.
+
+Known limitation (2026-09-10 validation): the file is NOT a hash chain. Each
+receipt carries a `supersedes` pointer to the action record it corrects, but
+that action record is not persisted, so `supersedes.digest` cannot be checked
+and reordering or deleting receipt lines is not detectable from the file alone.
+Verify receipts individually (or treat the file as an untrusted transport), and
+do not rely on file order as evidence. If `corrlog-core` is not installed,
+`enabled()` returns false and the hook stays inert rather than silently
+emitting nothing.
 
 The hook requires both variables deliberately: a signing key without a
 receipts file would sign and discard (the 0.1.0 behaviour, fixed in 0.1.1).
@@ -132,3 +141,23 @@ broken sink is non-fatal.
 ## License
 
 MIT.
+
+## Remediation candidate: trust and delivery boundaries
+
+Use the reviewed core 0.2.2 and Inspect 0.1.3 source/wheels together. These version
+numbers do not imply publication or approval. The `core` extra now requires the
+canonicalization/schema fixes. The published older packages do not contain them.
+
+For verification, provision the operator's public key independently and call
+`verify_trusted(receipt, trusted_operator_key)`. The evaluated model's agent.id is
+an operator assertion; it does not mean the model possesses the signing key.
+`metadata.subject_ref` preserves the supplied sample reference even if caller
+metadata contains a conflicting value. Each receipt is individually signed.
+
+The superseded action record is still not persisted. Its digest cannot be resolved
+from the receipt alone. Receipt files provide no ordering, completeness, duplicate
+or replay guarantee. Consumers can use ReplayGuard with protected persistent state
+for unique-ID admission. Equivalent events emitted with fresh IDs remain an
+application concern. enabled() reports configuration/import availability; signing
+and write failures are logged and do not fail an evaluation. Reconcile receipt
+counts and monitor errors if delivery matters. JSONL appends are not fsync-backed.
