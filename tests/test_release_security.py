@@ -103,7 +103,7 @@ def test_key_prefixes():
 def test_jcs_official_and_differential():
     vectors=Path(__file__).parent/'jcs-vectors'
     for path in sorted((vectors/'input').glob('*.json')):
-        obj=json.loads(path.read_text());expected=(vectors/'output'/path.name).read_bytes()
+        obj=json.loads(path.read_text(encoding='utf-8'));expected=(vectors/'output'/path.name).read_bytes()
         assert canonical_json(obj)==expected
         assert standalone.canonical_bytes(obj)==expected
     rng=random.Random(8785)
@@ -118,7 +118,7 @@ def test_jcs_official_and_differential():
 
 
 def test_standalone_duplicate_json_members(tmp_path):
-    p=tmp_path/'bad.json';p.write_text('{"a":1,"a":2}')
+    p=tmp_path/'bad.json';p.write_text('{"a":1,"a":2}', encoding='utf-8')
     with pytest.raises(ValueError):standalone.read_json(p)
 
 
@@ -135,7 +135,7 @@ def test_jsonl_ledger_limitations_are_explicit(tmp_path):
     for changed in [chain[1:],chain[:-1],chain[::-1],chain+[chain[-1]],
                     [other,*chain[1:]],[chain[0],other,*chain[1:]]]:
         path=tmp_path/'transport.jsonl'
-        path.write_text(''.join(json.dumps(r)+'\n' for r in changed))
+        path.write_text(''.join(json.dumps(r)+'\n' for r in changed), encoding='utf-8')
         assert all(verify(r,pk) for r in JsonlSink(str(path)).all())
 
 
@@ -148,7 +148,7 @@ def test_subject_ref_overrides_conflicting_metadata():
 
 
 def test_rfc8785_appendix_b():
-    values=json.loads((Path(__file__).parent/'jcs-vectors/appendix-b.json').read_text())
+    values=json.loads((Path(__file__).parent/'jcs-vectors/appendix-b.json').read_text(encoding='utf-8'))
     assert len(values)==26
     for bits, expected in values.items():
         value=struct.unpack('>d',bytes.fromhex(bits))[0]

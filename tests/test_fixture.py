@@ -26,7 +26,7 @@ VECTORS = REPO_ROOT / "verifier" / "vectors"
 
 
 def _load(name: str) -> dict:
-    return json.loads((VECTORS / name).read_text())
+    return json.loads((VECTORS / name).read_text(encoding="utf-8"))
 
 
 def test_sdk_and_standalone_agree_on_action():
