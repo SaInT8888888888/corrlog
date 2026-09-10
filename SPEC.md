@@ -43,13 +43,32 @@ are signed. Timestamps and identity strings are assertions, not externally attes
    prescribed escapes and ECMAScript number formatting.
 3. Sign these bytes using Ed25519 and store the 64-byte signature as unpadded base64url.
 
-Nonfinite numbers and lone surrogates are rejected. Python integers outside
-[-9007199254740991, 9007199254740991] are rejected: encode exact large integers as
-strings. Finite floats are binary64 values; signatures bind their canonical value,
-not the original spelling, whitespace or object-member order. Do not interpret this
-as byte-for-byte integrity of an input JSON file. Duplicate JSON members must be
-rejected at parsing; the standalone CLI does so. The dictionary API cannot recover
-members already discarded by an upstream parser.
+Nonfinite numbers and lone surrogates are rejected. Wire-format JSON numbers and
+`canonical_json` use IEEE 754 binary64 semantics, as in ECMAScript `JSON.parse` and
+RFC 8785. Python integers produced by parsing integer-looking JSON literals are
+converted to binary64 for canonicalization and verification. The shortest canonical
+decimal spelling of a binary64 can differ from its exact mathematical integer
+(`float(2**68)` spells as `295147905179352830000` while it is exactly
+`295147905179352825856`); treating that spelling as an arbitrary-precision integer
+would wrongly reject valid canonical JSON.
+
+Application constructors apply an additional input-safety guard before signing:
+Python integers that cannot be represented exactly as a finite binary64 are rejected
+in the signed body and in dictionary content passed for hashing. Floats already have
+binary64 precision. Converting an inexact integer to float explicitly selects
+approximate number semantics; it does not preserve its exact integer value. Use
+strings for exact decimal money, identifiers and large integer quantities.
+
+Verification authenticates canonical numeric values, not arbitrary-precision
+interpretations of decimal literal spellings. Different literals mapping to the same
+binary64 have the same canonical bytes and the same signature, so a verifier may
+accept both spellings: for example `9007199254740992` and `9007199254740993` parse to
+the same binary64 number. This is not a guarantee of decimal-digit integrity. To
+authenticate that exact distinction, sign strings instead.
+
+Whitespace and object-member order are likewise not signed distinctions. Duplicate
+JSON members must be rejected at parsing; the standalone CLI does so. The dictionary
+API cannot recover members or numeric precision already lost by an upstream parser.
 
 For historical compatibility, hashes of dictionary action arguments/results and
 corrected content use canonical JSON; other content uses Python str(value).encode().

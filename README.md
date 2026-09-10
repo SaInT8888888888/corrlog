@@ -126,6 +126,14 @@ Retain and protect the database across restarts. This provides at-most-once admi
 per ID, not exactly-once processing or detection of equivalent events with fresh IDs.
 Inspect emission does not automatically use this guard. See SPEC.md and SECURITY.md.
 
+## Exact values
+
+JSON numbers have binary64 precision. Use strings for exact decimal amounts,
+identifiers and large counts, for example `{"amount": "100.33", "account": "9007199254740993"}`.
+Constructors reject inexact Python integer inputs before signing; verification checks
+canonical numeric values, not differences between decimal spellings that round to the
+same binary64. See SPEC.md for this security-relevant boundary.
+
 ## Candidate status and compatibility
 
 This is unreleased remediation for 0.2.2. Do not assume the published 0.2.1 package

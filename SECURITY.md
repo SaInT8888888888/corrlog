@@ -56,3 +56,14 @@ its verification method explicitly. Do not overwrite history with re-signed reco
 
 Report suspected vulnerabilities privately to the maintainer where possible; avoid
 publishing exploitable details before a fix is available.
+
+## Numeric precision boundary
+
+Verification interprets JSON numbers as binary64 values. Different decimal literals
+can map to the same numeric value and therefore the same signature. This applies to
+any RFC 8785 consumer using binary64 semantics. Sign exact money, account IDs and
+large integer quantities as strings when preserving every digit matters. Constructors
+reject inexact Python integer inputs before signing, but cannot recover precision
+already lost by conversion to float or by an upstream JSON parser. This input guard
+must not be applied to parsing canonical output: shortest decimal spellings are not
+necessarily exact mathematical representations of the underlying binary64.
