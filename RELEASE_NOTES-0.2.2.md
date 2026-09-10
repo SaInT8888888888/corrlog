@@ -38,16 +38,22 @@ Unicode case alone. It also covers two number classes.
 - ACR core fields carry non-integers as strings, so in practice this bites metadata and
   extension content that carries raw JSON numbers.
 
-### 3. Integers outside the IEEE 754 domain
+### 3. Integers and the binary64 numeric contract
 
-- A JSON number must be representable as an IEEE 754 binary64 value. Integers that cannot
-  be represented exactly are **rejected** with `ValueError` and must be carried as strings.
-  They are never silently rounded.
-- This applies to values such as `2**53 + 1` and `10**20 + 1`. Exactly representable
-  integers, including `2**53`, `10**16` and `10**20`, are accepted and serialize to the
-  same bytes a conforming implementation produces.
-- 0.2.1 accepted and signed integers of any magnitude. Such a value cannot be re-signed by
-  0.2.2 without changing its representation, which is itself a new assertion about the data.
+- Wire-format numbers carry binary64 semantics, as ECMAScript `JSON.parse` and RFC 8785
+  specify. A parsed integer literal is interpreted as the binary64 value it denotes.
+- Constructors refuse to sign a Python integer that cannot be represented exactly:
+  `2**53 + 1`, `10**20 + 1` and `10**400` are rejected before signing, including inside
+  metadata, action arguments, action results and corrected content. Exact decimal
+  quantities and identifiers belong in strings.
+- A consequence worth understanding rather than discovering: two literals that map to the
+  same binary64 have identical canonical bytes and therefore the same signature.
+  `9007199254740992` and `9007199254740993` verify under one signature. That is a property
+  of binary64 JSON numbers, shared with every conforming implementation, and it is stated
+  here rather than implied away. Sign strings when the exact decimal digits matter.
+- 0.2.1 accepted and signed integers of any magnitude and canonicalized some of them to
+  different bytes. Such a value cannot be re-signed by 0.2.2 without changing its
+  representation, which is itself a new assertion about the data.
 
 ### Measured effect on existing records
 
@@ -113,44 +119,49 @@ tightened schema could be rejected even with conformant signature bytes.
 
 ---
 
-## Numeric domain (single policy, applied everywhere)
+## Numeric contract (adopted from the lifecycle repair)
 
-One rule now governs numbers at construction, canonicalization, JSON parsing and
-verification: **a parsed integer is admitted when it is either the exact mathematical value
-of its binary64, or the canonical shortest-round-trip spelling of that binary64.** Python's
-`int` and `float` are therefore the same JSON number whenever they denote the same value,
-and the codec invariant holds:
+Two rules, split by where the risk sits:
 
-```
-canonical(parse(canonical(value))) == canonical(value)
-```
+- **Wire format and canonicalization use binary64 semantics**, as ECMAScript `JSON.parse`
+  and RFC 8785 require. A parsed integer literal is interpreted as the binary64 value it
+  denotes, so the codec invariant holds:
 
-Case (b) is not optional. RFC 8785 mandates the shortest decimal spelling that round-trips,
-and for large values that spelling is not the exact value of the double: `float(2**68)`
-spells as `295147905179352830000`, while the double's exact value is
-`295147905179352825856`. An earlier revision of this candidate required exact equality and
-so rejected a spelling the RFC requires, which broke the round-trip for 3 of the 24 finite
-Appendix B samples and for 687 of 99,958 random draws.
+  ```
+  canonical(parse(canonical(value))) == canonical(value)
+  ```
 
-An application integer that is neither (a) nor (b) is rejected and must be carried as a
-JSON string. That is a deliberate policy, not rounding: values such as `2**53 + 1` and
-`10**20 + 1` are refused rather than silently changed, so nothing a caller wrote is ever
-altered on the wire.
+- **Constructors apply an input guard before signing.** A Python integer that cannot be
+  represented exactly as a finite binary64 is refused in the signed body and in dictionary
+  content passed for hashing, so a caller cannot silently lose precision at creation time.
 
-This replaces the original rule, which rejected any Python integer with `|n| >= 2**53`. That
-rule was applied at canonicalization but not at construction, so the library could accept a
-value such as `1e16`, sign it, write `10000000000000000`, and then reject that same record
-once the JSON was parsed back, because Python re-parses the literal as an `int`. A record
-the library accepted and signed could fail verification against an untouched file. The
-standalone verifier had the same problem from the other side, because the `rfc8785` Python
-package rejects large `int` values while accepting the equivalent `float`.
+Both halves are needed. Without the first, the codec rejects valid canonical JSON: the
+shortest decimal spelling of a binary64 is often not its exact mathematical integer
+(`float(2**68)` spells as `295147905179352830000` while it is exactly
+`295147905179352825856`). Without the second, an application could sign a rounded number
+without noticing.
 
-The domain is now consistent, and both implementations agree byte-for-byte with an
-independent JavaScript canonicalizer across the wire spellings tested. Regression coverage
-is in `tests/test_numeric_roundtrip.py`: round-trip through both canonical and ordinary
-JSON, eight pairs of wire spellings that denote the same number, the CLI path for both
-file forms, rejection of inexact integers, and agreement with the equivalent double
-spelling.
+This is the third and adopted version of this rule for the candidate. The first rejected any
+Python integer with `|n| >= 2**53` at canonicalization but not at construction, so the
+library could accept `1e16`, sign it, write `10000000000000000`, and then reject that same
+record once the JSON was parsed back. The second tried to admit a parsed integer only when
+it equalled the double's exact value or the canonical spelling of it, which still rejected
+three of the 24 finite Appendix B samples and 687 of 99,958 random draws. Both earlier
+versions were reproduced and measured before being replaced, and their failure cases are
+retained as regression tests.
+
+The independent verifier delegates canonicalization to `rfc8785` and normalises received
+numbers into the same binary64 domain, including Python tuples as arrays, so an in-memory
+record verifies identically in both implementations. Cross-implementation agreement is
+checked against a native JavaScript canonicalizer: 99,962 cases, zero mismatches.
+
+Regression coverage: `tests/test_numeric_roundtrip.py` (round-trips over canonical and
+ordinary JSON, wire-spelling equivalence, the CLI path, the constructor guard, and a seeded
+closure fuzz), `tests/test_appendix_b_roundtrip.py` (every finite Appendix B sample through
+signing, serialization, parsing and the CLI), `tests/test_chain_serialization.py` (chain and
+checkpoint survival across serialization, with tamper rejection) and
+`tests/test_lifecycle_contract.py` (whole-lifecycle contract, the same-binary64 boundary,
+different-binary64 tamper rejection, and exact-string tamper rejection).
 
 ---
 
@@ -239,19 +250,24 @@ in four clean environments:
 
 | Artifact | SHA-256 |
 |---|---|
-| `corrlog_core-0.2.2-py3-none-any.whl` | `d9a1330eb4b409077fdfcdb2cb228a348b2069adfff9bf8cb37c27c086e378eb` |
-| `corrlog_inspect-0.1.3-py3-none-any.whl` | `20f59fe08100d3200495522e44b9e7acba714d78e52081653bfb93b5c13bbe65` |
+| `corrlog_core-0.2.2-py3-none-any.whl` | `59e448fb68efe08666468153082048784e360d655011257aa899da8cae7e80d8` |
+| `corrlog_inspect-0.1.3-py3-none-any.whl` | `99241f1faddb3d086316354d3b37a9ccf30aebb8b291429de6b70b6188ecbc93` |
 
-These are the artifacts of the current revision, which includes the F-01 numeric fix.
+These are the artifacts of the current revision, which carries the adopted numeric contract.
 
 - **Installed packages**: full suite run against the installed wheels, from a test tree
-  containing no package source. **131 passed.** `pip check` clean. The suite grew from 70
-  cases to 131 with the numeric round-trip regression coverage.
-- **Numeric domain**: the report's own reproduction now passes for `1e16`, `1e20`, `1e21`,
-  `56.0` and `0.1`, in-memory and after a canonical JSON round-trip. All ten CLI cases from
-  the retest pass, including both canonical files that previously failed. Canonical output is
-  byte-identical to the independent JavaScript canonicalizer across every wire spelling
-  tested.
+  containing no package source. **257 passed.** `pip check` clean. The suite grew from 70
+  cases to 257 through the numeric regressions, the Appendix B lifecycle cases, the chain
+  serialization cases and the lifecycle contract tests.
+- **Numeric contract**: the retest's own reproduction passes. Every finite Appendix B sample
+  survives signing, serialization, parsing and verification, 24 of 24. The closure fuzz,
+  seed 20260910, shows **0 failures in 99,958 finite draws**. All CLI fixtures pass in both
+  normal and canonical form. Canonical output matches an independent native JavaScript
+  canonicalizer across **99,962 cases with 0 mismatches**.
+- **Boundary behaviour, stated for users**: a literal that maps to the same binary64 as the
+  signed value verifies, because the canonical bytes are identical. A literal that maps to a
+  different binary64 is rejected, and tampering with a signed string is rejected. Sign
+  strings when exact decimal digits must be authenticated.
 - **Independent verifier environment**: `rfc8785`, `jsonschema` and `cryptography` only,
   with CorrLog absent (`find_spec("corrlog_core") is None`). `pip check` clean.
 - **Inspect without core**: `corrlog-inspect` 0.1.3 installs and imports with no core

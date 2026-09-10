@@ -34,9 +34,72 @@ The authoring machine's live checkout was not available to the original review. 
 repository reproduces its supplied patch, not any changes made there after the handover.
 See "Final revision and platform results" below for what has since been added on top.
 
+## Reconciliation (final revision)
+
+This revision combines two repairs of the same numeric defect. What came from where:
+
+**Adopted from the lifecycle repair (`22b1f88`, based on `a683162`)**
+
+- The numeric contract in `corrlog_core`: wire-format and canonicalization numbers use
+  binary64 semantics, with `_jcs_integer` interpreting a parsed integer literal as the
+  double it denotes.
+- `_check_application_numbers`, the constructor-side guard that refuses to sign a Python
+  integer which cannot be represented exactly, applied to the signed body and to dictionary
+  content passed for hashing.
+- The verifier's domain adapter accepting any finite parsed number as binary64, and
+  normalising Python tuples as JSON arrays. The tuple handling closes a real divergence in
+  the previous revision, where an in-memory record containing a tuple failed
+  `standalone.verify_record` while the core accepted it.
+- `tests/test_lifecycle_contract.py`, and the numeric wording now in SPEC.md, SECURITY.md
+  and README.md.
+
+**Kept from this branch (`18058db`)**
+
+- `tests/test_appendix_b_roundtrip.py`, `tests/test_chain_serialization.py`, the
+  shortest-spelling cases and the seeded closure fuzz in `tests/test_numeric_roundtrip.py`.
+- The compatibility-break sections, the bounded disclosure wording, the publish-order
+  requirement, the UTF-8 portability fixes and the CI workflow change.
+
+**Conflicting test expectations, resolved rather than deleted**
+
+Two expectations belonged to the superseded rule and were rewritten to pin both halves of
+the adopted contract:
+
+1. `tests/test_numeric_roundtrip.py::test_inexact_integers_are_rejected_not_rounded`
+   asserted that `canonical_json` raises for `2**53 + 1`. Under the adopted contract the
+   codec does not raise, because the literal is the binary64 it maps to; rejection belongs to
+   the constructors. The test now asserts the codec equivalence AND the constructor
+   rejection, and a second test covers every constructor path including hashed content.
+   Coverage is wider than before, not narrower.
+2. `tests/test_release_security.py::test_jcs_official_and_differential` listed `2**53 + 1`
+   and `2**64 + 1` as values `canonical_json` must reject. Those two were removed and a
+   positive assertion of binary64 equivalence added in their place, with a comment pointing
+   at where rejection is now asserted. Non-finite and lone-surrogate rejection is unchanged.
+
+## Evidence provenance
+
+Results are separated by what was measured on which revision, so historical evidence is not
+mistaken for evidence about this revision.
+
+| Result | Revision measured | Where it ran |
+|---|---|---|
+| Numeric contract probes, all eight | reconciled revision | this host, on the local source |
+| Suite 257 passed | reconciled revision | this host, source and installed wheel |
+| Appendix B signed round-trip 24/24 | reconciled revision | this host |
+| Closure fuzz, seed 20260910, 0 failed of 99,958 | reconciled revision | this host |
+| JavaScript differential, 99,962 matched, 0 mismatches | lifecycle repair, re-run confirmed on the reconciled revision | this host, Node 22 |
+| Cross-platform CI, 12 jobs | see the run cited under "Final revision and platform results" | GitHub Actions |
+| Suite 224 passed, 160 passed | earlier revisions `18058db` and `22b1f88` | this host |
+| Historical core matrix 78/91, Inspect 9/10, offline oracle, adversarial suite, fresh-install matrix | earlier revisions, macOS, Python 3.12 | supplied evidence bundles, hashes verified |
+| Legacy compatibility matrix, seven fixtures | earlier revisions | this host plus the reviewers' JavaScript checker |
+
+Historical defect analysis is retained below under "Defect history", clearly labelled by
+revision. It is the record of how this defect was found and fixed, not a description of the
+current revision.
+
 ## Final revision and platform results
 
-Tested code revision: `3c2d6ed`, the revision the CI matrix and the fresh-environment package
+Tested code revision: `4e00708`, the revision the CI matrix and the fresh-environment package
 tests below were run against, on the branch `remediation/release-readiness` (draft pull
 request against `master`, `https://github.com/SaInT8888888888/corrlog/pull/6`).
 Documentation-only commits may sit above it; they change no packaged file, so the wheel
@@ -49,6 +112,10 @@ hashes recorded below remain the tested artifacts. History on top of the base:
 - `c0043fe` verifier inputs and schemas read as UTF-8 explicitly
 - `3c2d6ed` numeric domain consistency in core and verifier (F-01), plus
   `tests/test_numeric_roundtrip.py`
+- `18058db` F-01 round 2: canonical-spelling acceptance, plus the Appendix B and chain
+  serialization regressions
+- `4e00708` reconciliation with the lifecycle repair: adopt its binary64 contract and
+  constructor guard, keep this branch's regression tests
 
 ### Cross-platform CI
 
@@ -84,14 +151,25 @@ is already the default. `JsonlSink` already specified UTF-8 and was unaffected.
 
 ### Release packages in fresh environments
 
-Built from `c0043fe` and installed into four clean environments:
+Built from `4e00708` and installed into clean environments:
 
 | Artifact | SHA-256 |
 |---|---|
-| `corrlog_core-0.2.2-py3-none-any.whl` | `d9a1330eb4b409077fdfcdb2cb228a348b2069adfff9bf8cb37c27c086e378eb` |
-| `corrlog_inspect-0.1.3-py3-none-any.whl` | `20f59fe08100d3200495522e44b9e7acba714d78e52081653bfb93b5c13bbe65` |
+| `corrlog_core-0.2.2-py3-none-any.whl` | `59e448fb68efe08666468153082048784e360d655011257aa899da8cae7e80d8` |
+| `corrlog_inspect-0.1.3-py3-none-any.whl` | `99241f1faddb3d086316354d3b37a9ccf30aebb8b291429de6b70b6188ecbc93` |
 
-- Installed-wheel suite, run from a test tree with no package source present: **131 passed**.
+- Installed-wheel suite, run from a test tree with no package source present: **257 passed**.
+- Numeric contract, reproduced against the installed wheel: all eight independent probes agree
+  with the adopted contract. Signed record survives its own canonical wire form. A literal
+  mapping to the same binary64 verifies. A literal mapping to a different binary64 is
+  rejected. String tampering is rejected. Every constructor refuses inexact integers,
+  including hashed dictionary content. Nested tuples agree between the core and the
+  standalone verifier.
+- RFC Appendix B signed round-trip: **24 of 24** finite samples.
+- Closure fuzz, seed 20260910: **0 failures in 99,958 finite draws**.
+- Independent JavaScript canonicalizer: **99,962 cases, 0 mismatches**.
+- Retest fixtures: their 24-case regression and all CLI fixtures, both normal and canonical
+  forms, exit 0.
 - Independent verifier environment containing `rfc8785`, `jsonschema` and `cryptography`
   only, with CorrLog absent: `find_spec("corrlog_core") is None`.
 - Inspect installed without core: imports cleanly with no core present.
@@ -172,6 +250,13 @@ agrees with the independent JavaScript checker on every shape tested.
 Caveats to carry: seven representative shapes rather than an exhaustive sweep, and 0.2.2
 enforces the record schema at verification time, so a legacy record violating the tightened
 schema could be rejected even with conformant signature bytes.
+
+## Defect history and remediation (historical revisions, retained as record)
+
+The analysis below describes earlier revisions and is kept as the audit trail: how the
+numeric defect was found, why two successive fixes were insufficient, and what each retest
+established. It is not a description of the reconciled revision. See "Reconciliation" above
+for what the final revision actually contains.
 
 ## Final retest round and remediation (2026-09-10)
 
