@@ -43,9 +43,26 @@ def _to_double_domain(value):
             as_double = float(value)
         except OverflowError:
             raise ValueError('integer outside the IEEE 754 double range')
-        if not math.isfinite(as_double) or int(as_double) != value:
-            raise ValueError('integer not exactly representable as an IEEE 754 double')
-        return as_double
+        if not math.isfinite(as_double):
+            raise ValueError('integer outside the IEEE 754 double range')
+        if int(as_double) == value:
+            return as_double
+        # RFC 8785 serializes the shortest decimal spelling that round-trips, and
+        # for large values that spelling is not the exact value of the double
+        # (float(2**68) spells as 295147905179352830000, not ...825856). If the
+        # parsed integer IS that spelling then re-serializing the double returns
+        # the same text, so the value does not change and the record must verify.
+        # The spelling is obtained from rfc8785 itself, keeping this independent of
+        # the CorrLog canonicalizer.
+        spelling = rfc8785.dumps(as_double)
+        if isinstance(spelling, bytes):
+            spelling = spelling.decode('ascii')
+        try:
+            if int(spelling) == value:
+                return as_double
+        except ValueError:
+            pass  # exponential spelling, so no integer form to compare against
+        raise ValueError('integer not exactly representable as an IEEE 754 double')
     if isinstance(value, dict):
         return {k: _to_double_domain(v) for k, v in value.items()}
     if isinstance(value, list):

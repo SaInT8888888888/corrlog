@@ -91,19 +91,35 @@ def _jcs_number(value: Any) -> str:
 
 
 def _jcs_integer(n: int) -> str:
-    """Serialise an integer exactly representable as a binary64.
+    """Serialise a JSON number that Python parsed as an ``int``.
 
-    Rejects instead of rounding, so a value never changes silently on the wire.
+    Accepts the value when the integer either is the exact mathematical value of
+    its binary64, or is itself the canonical shortest-round-trip spelling of that
+    binary64. The second case is required for RFC 8785 conformance: the shortest
+    spelling of ``float(2**68)`` is ``295147905179352830000``, which is NOT the
+    exact value of the double (``295147905179352825856``), yet it is the spelling
+    the RFC mandates and a conforming implementation produces it.
+
+    Integers that are neither are rejected rather than rounded, so a written value
+    never changes silently on the wire (``2**53 + 1`` still fails).
     """
     try:
         as_double = float(n)
     except OverflowError:
         raise ValueError("integer outside the IEEE 754 double range must be a string")
-    if not math.isfinite(as_double) or int(as_double) != n:
-        raise ValueError(
-            "integer not exactly representable as an IEEE 754 double must be a string"
-        )
-    return _jcs_double(as_double)
+    if not math.isfinite(as_double):
+        raise ValueError("integer outside the IEEE 754 double range must be a string")
+    spelling = _jcs_double(as_double)
+    if int(as_double) == n:
+        return spelling
+    try:
+        if int(spelling) == n:
+            return spelling
+    except ValueError:
+        pass  # exponential spelling, so no integer form to compare against
+    raise ValueError(
+        "integer not exactly representable as an IEEE 754 double must be a string"
+    )
 
 
 def _jcs_double(x: float) -> str:
