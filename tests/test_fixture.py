@@ -68,11 +68,13 @@ def test_standalone_rejects_wrong_key_when_pinned():
 def test_vectors_are_deterministic():
     """Re-generating must be byte-identical (frozen vectors don't drift)."""
     import subprocess
+    before = {p.name: p.read_bytes() for p in VECTORS.glob("*.json")}
     gen = subprocess.run(
         [sys.executable, "verifier/generate_vectors.py"],
         cwd=REPO_ROOT, capture_output=True, text=True,
     )
     assert gen.returncode == 0, gen.stderr
+    assert before == {p.name: p.read_bytes() for p in VECTORS.glob("*.json")}
     # After regeneration the action vector must be unchanged.
     # (Deterministic because the seed is fixed; this guards accidental
     #  non-determinism creeping into the signer.)

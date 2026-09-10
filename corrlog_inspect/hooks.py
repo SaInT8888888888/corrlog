@@ -19,7 +19,14 @@ Design choices worth knowing:
   * One receipt per failing *sample*, aggregating every scorer that returned
     INCORRECT into that receipt's metadata — not one receipt per scorer.
   * Every signed receipt is appended to the JSONL file at
-    CORRLOG_RECEIPTS_PATH (append-only, durable, hash-chained by file order).
+    CORRLOG_RECEIPTS_PATH (append-only, durable, each receipt independently
+    signed). NOTE: the file is NOT a hash chain. The receipt carries a
+    `supersedes` pointer at the action record, but that record is not persisted,
+    so the pointer is not checkable and line deletion/reordering is not
+    detectable from the file alone. Verify receipts individually.
+  * Without corrlog-core (the optional `core` extra) nothing can be signed, so
+    enabled() reports False rather than claiming to be active and emitting
+    nothing.
   * Signing or persistence failures are caught and logged, never raised: a
     correction-log hook must not be able to fail an eval run.
 """
@@ -45,6 +52,20 @@ KEY_ENV = "CORRLOG_SIGNING_KEY"
 PATH_ENV = "CORRLOG_RECEIPTS_PATH"
 
 
+def _core_available() -> bool:
+    """True if corrlog_core (the signing dependency) can be imported.
+
+    corrlog-inspect installs without corrlog-core (the `core` extra is
+    optional). Without it, nothing can be signed, so the hook must report
+    itself disabled rather than claiming to be enabled and emitting nothing.
+    """
+    try:
+        import corrlog_core  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 def _is_failing(score: Score) -> bool:
     """True if this score represents a failure (INCORRECT).
 
@@ -67,12 +88,23 @@ class CorrlogReceiptHook(Hooks):
     ) -> None:
         # Allow injection for testing; default to the real corrlog seam.
         key = os.environ.get(KEY_ENV, "")
-        self._signer: Signer | None = signer or (CorrlogSigner(key) if key else None)
+        if signer is None and key and not _core_available():
+            # Actionable, single-line diagnosis instead of a per-sample traceback
+            # for what is a missing optional dependency.
+            logger.error(
+                "corrlog: %s is set but corrlog-core is not installed, so no receipt "
+                "can be signed. Install it with: pip install 'corrlog-inspect[core]'. "
+                "The hook will stay inert for this run.",
+                KEY_ENV,
+            )
+        self._signer: Signer | None = signer or (
+            CorrlogSigner(key) if key and _core_available() else None
+        )
         # Durable append-only sink; built from CORRLOG_RECEIPTS_PATH unless
         # injected. A broken sink must never break the eval, so construction
         # and every append are guarded and logged.
         self._sink: Any | None = sink
-        if self._sink is None and os.environ.get(PATH_ENV):
+        if self._sink is None and os.environ.get(PATH_ENV) and _core_available():
             try:
                 from corrlog_core import JsonlSink
 
@@ -98,7 +130,9 @@ class CorrlogReceiptHook(Hooks):
         # or write a usable receipt).
         key = os.environ.get(KEY_ENV, "").strip()
         path = os.environ.get(PATH_ENV, "").strip()
-        return bool(key and path)
+        # A configured key with no signing library cannot produce receipts:
+        # report disabled rather than enabled-but-silently-inert.
+        return bool(key and path and _core_available())
 
     async def on_task_start(self, data: TaskStart) -> None:
         # spec.model is the evaluated model string (e.g. "openai/gpt-4o").

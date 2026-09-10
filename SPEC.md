@@ -1,229 +1,119 @@
-# Agent Correction Record (ACR) — v1.0
+# Agent Correction Record: implemented v1 profile
 
-**Status:** Draft for implementation. This document defines version 1.0 of the Agent
-Correction Record (ACR) format — a cryptographically signed, tamper-evident record of a
-*correction to a prior agent action, plus the corrective action taken*.
+## 1. Scope
 
-ACR is an **extension to the Agent Action Receipt (AAR v1.0)** specification
-(`Cyberweasel777/agent-action-receipt-spec`). It does not compete with AAR; it layers
-correction semantics on top of the receipt chain AAR already defines.
+CorrLog signs disclosures about actions, corrections and uncertainty. Ed25519
+signatures bind canonical record content to a key. A trusted public key is required
+for attribution. A signature does not prove the statement is true, that a referenced
+source is correct, that an agent performed an action, or that all events were recorded.
 
-The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**, **SHOULD**,
-**RECOMMENDED**, **MAY**, and **OPTIONAL** are interpreted as described in RFC 2119.
+JSONL files are untrusted transport/storage. They are not tamper-evident ledgers.
+Insertion, deletion, reordering, truncation, substitution by another valid signed
+record and replay are not detected by checking each record individually.
 
----
+## 2. Record family and schema
 
-## 1. Abstract
+The normative implemented schema is `corrlog_core/schema/acr-v1.json` (JSON Schema
+2020-12). `verifier/acr-v1.json` is a byte-identical copy for offline distribution.
+All constructors validate their output, and `verify` enforces the schema, including
+RFC 3339 date-time format, before signature verification. Invalid constructor
+arguments raise ValueError or a type/canonicalization error; no invalid record is returned.
 
-AAR records *what an agent did*. ACR records *a correction that was made to a prior
-action* — what was wrong, who/what detected it, and what was done to fix it. Together they
-form a verifiable audit ledger: actions (receipts) and corrections (errata).
+Common required fields: correctionId (nonempty string), agent.id, principal.id and
+principal.type, timestamp, and signature. Metadata is an optional object.
 
-ACR enables an AI deployer to evidence the corrective-action and incident-reporting duties
-imposed by the EU AI Act (Art 20 corrective actions, Art 26(5) monitor/suspend, Art 26(6)
-log retention, Art 73 serious-incident reporting) and to align with NIST AI RMF MANAGE 4.3.
+- Action roots: action.type, reason, trigger and fix.type; no supersedes. An empty
+  reason is allowed for action receipts. Legacy roots omit kind; kind=action is allowed.
+- Corrections: the action fields plus nonempty reason and supersedes containing the
+  predecessor's receiptId and SHA-256 digest. kind=correction is optional.
+- Uncertainty: kind=unknown and nonempty subject, optional note; no action, fix or
+  supersedes. It can serve as a root when later corrected.
 
-## 2. Motivation — and the scope of what ACR proves
+Triggers: supersede, check_failed, human_flagged, self_correction. Fix types: replace,
+delete, rollback, noop, other. Optional fix.source has a type (schema, document,
+database, api, human, other) and nonempty reference. A source is an assertion to
+investigate, not independent proof. Unknown extension properties remain allowed and
+are signed. Timestamps and identity strings are assertions, not externally attested facts.
 
-Every production agent makes mistakes. Today those mistakes are either hidden or recorded in
-ad-hoc, platform-specific, non-cryptographic logs. ACR gives a standard, signed way to
-record a correction when one is detected and disclosed.
+## 3. Signing
 
-**What ACR proves, precisely:**
+1. Construct signature with alg=Ed25519, canonicalization=RFC8785, nonempty kid,
+   publicKey (32 bytes, unpadded base64url), and sig="".
+2. Canonicalize the entire object using RFC 8785: UTF-16 key ordering, UTF-8 strings,
+   prescribed escapes and ECMAScript number formatting.
+3. Sign these bytes using Ed25519 and store the 64-byte signature as unpadded base64url.
 
-- **Integrity** — the records were not altered or re-ordered after being written (Ed25519
-  signature over canonical bytes, hash-chained). This is a strong, complete guarantee.
-- **Attribution** — a given correction record was signed by the holder of a specific signing
-  key (the agent's key, or the orchestrator/runtime that holds it on the agent's behalf).
+Nonfinite numbers and lone surrogates are rejected. Python integers outside
+[-9007199254740991, 9007199254740991] are rejected: encode exact large integers as
+strings. Finite floats are binary64 values; signatures bind their canonical value,
+not the original spelling, whitespace or object-member order. Do not interpret this
+as byte-for-byte integrity of an input JSON file. Duplicate JSON members must be
+rejected at parsing; the standalone CLI does so. The dictionary API cannot recover
+members already discarded by an upstream parser.
 
-**What ACR does NOT prove:**
+For historical compatibility, hashes of dictionary action arguments/results and
+corrected content use canonical JSON; other content uses Python str(value).encode().
+These auxiliary content hashes are not a language-neutral content serialization
+contract. The whole record signature is independently verifiable.
 
-- **Completeness.** ACR cannot prove the *absence* of undetected or undisclosed mistakes.
-  The absence of correction records means only "no corrections were detected and recorded
-  through the configured mechanisms" — it does NOT mean "no mistakes were made." A party
-  that controls its own signing key and touches nothing external can simply never write a
-  correction. ACR is therefore strong evidence of *integrity*, and weaker evidence of
-  *disclosure*, unless the deployment adds independent observers (see §9).
+## 4. Verification and trust
 
-This is not a rhetorical hedge — it is the boundary that keeps ACR honest and defensible to
-a sharp auditor. The design's job (see §9) is to widen the set of independent signers as
-cheaply as possible, so "no undisclosed mistakes" can be *approached* — never absolutely
-claimed.
+`verify(record, public_key=None)` returns False for malformed input, schema violations,
+unsupported values, inconsistent embedded keys or invalid signatures. With no key it
+checks only consistency under the supplied embedded key. It does not establish trust.
+Use `verify_trusted(record, trusted_key)` for admission decisions; it rejects missing
+keys. `load_public_key` decodes an unpadded base64url key but does not establish trust.
+The key must be provisioned through an authenticated channel and bound to the expected
+operator. kid is signed metadata, not a trusted key directory or authorization policy.
 
-## 3. The key honesty rule: trigger, not confession
+## 5. Correction chains and checkpoints
 
-An LLM does **not** reliably detect its own mistakes. ACR therefore does **not** require an
-agent to spontaneously confess. A correction record is written when a correction is
-**detected** by one of four triggers:
+`verify_chain` requires a nonempty list starting with a root, valid signatures, unique
+correctionIds, and every later record pointing to the immediate predecessor by both
+ID and SHA-256 digest of the entire signed canonical record. This is a linear
+correction chain, not a file-order chain of unrelated receipts.
 
-| `trigger` value | Meaning |
-|---|---|
-| `supersede` | A newer write on the same canonical key replaced an older one. |
-| `check_failed` | A deterministic validator / write guard / policy engine rejected an action. |
-| `human_flagged` | A person marked a prior output as wrong. |
-| `self_correction` | The agent itself detected the error (exists, but flagged as the weakest trigger). |
+Without a checkpoint a valid prefix passes. Complete-history verification requires a
+separately trusted checkpoint {length, genesis, head} and a trusted public key. Genesis
+and head are SHA-256 base64url digests of the first and last signed records. The
+checkpoint binds the exact rooted sequence through its links. `chain_checkpoint`
+only computes a description; it neither signs nor establishes trust in it. A trusted
+producer must distribute it through an authenticated channel; consumers must retain
+the latest expected checkpoint and prevent rollback. A checkpoint supplied by the
+same untrusted transport as the chain cannot establish completeness or freshness.
 
-The correction is **signed by the key that holds authority over the action** — the agent's
-key, or the runtime/orchestrator that holds it on the agent's behalf. The signature proves
-*attribution* ("this key-holder recorded the correction"), not *autonomous self-recognition*
-("the model itself realised its error"). The *trigger* field records who/what detected it —
-deterministic or human — never an LLM's unaided conscience.
+Checkpoint verification detects insertion, deletion (including prefix/suffix),
+reordering, substitution and duplicate insertion relative to that checkpoint.
+It cannot detect undisclosed events, a malicious authorized signer, competing histories,
+or replay of an entire previously valid chain without consumer state. No automatic
+checkpoint service, witness, key rotation service or recovery protocol is provided.
 
+## 6. Replay and storage
 
+MemorySink rejects duplicate correctionIds and copies records at its boundaries.
+JsonlSink is a permissive transport: it does not enforce schema, trust or uniqueness.
+Its readers skip malformed JSON lines and expose damaged_lines. A successful read
+must never be interpreted as successful security verification. There is no fsync
+promise and no power-loss durability guarantee. Inspect uses this transport.
 
-## 4. Record format
+`corrlog_core.replay.ReplayGuard` verifies under a required trusted key and inserts
+correctionId into a SQLite primary-key table transactionally. Across cooperating
+consumers sharing that database, only one admission per ID succeeds, including across
+restarts. Reuse of an ID with different signed content is rejected. SQLite errors
+propagate; the consumer must fail closed. The database must be retained and protected
+against deletion/rollback. This is at-most-once admission, not exactly-once business
+processing. An admission committed before a consumer crash may leave work unprocessed.
+Coordinate side effects and admission in an application transaction/outbox when needed.
+Fresh-ID semantic duplicates and cross-domain replay require application-level event
+identity and authorization. The guard is opt-in; Inspect receipt emission does not use it.
 
-An ACR record is a UTF-8 JSON object, signed with Ed25519 over canonical JSON
-per **RFC 8785 (JCS — JSON Canonicalization Scheme)**.
+## 7. Compatibility and release boundary
 
-### 4.1 Top-level fields
+0.2.1's nonconforming canonicalization produced signatures that this verifier may reject,
+including records containing non-ASCII text. No silent legacy fallback is permitted.
+Preserve original archives and their provenance. Any re-signing is a new attestation,
+not proof that the old signature met RFC 8785. Schema enforcement also rejects previously
+accepted malformed signed records. Evaluate this behavior change before release.
 
-- `correctionId` (string, REQUIRED): globally unique identifier (UUID RECOMMENDED).
-- `agent` (object, REQUIRED): identity of the correcting agent — same shape as AAR `agent` (`id`, `name`, `version`, `publicKey`).
-- `principal` (object, REQUIRED): identity on whose behalf the correction is made — same shape as AAR `principal` (`id`, `type`).
-- `supersedes` (object, REQUIRED): the record being corrected.
-  - `receiptId` (string, REQUIRED): the AAR receipt id, or ACR correction id, being amended.
-  - `digest` (object, REQUIRED): SHA-256 hash of the superseded record's canonical bytes, in AAR `hashObject` shape (`alg`, `digest`).
-- `action` (object, REQUIRED): the corrected action.
-  - `type` (string, REQUIRED): semantic label, e.g. `memory.write`, `api.call`, `payment.execute`.
-  - `target` (string, OPTIONAL): resource URI/route/contract.
-- `reason` (string, REQUIRED): why the correction is made (the validation error, the human note, the contradiction).
-- `trigger` (string, REQUIRED): one of `supersede | check_failed | human_flagged | self_correction`.
-- `fix` (object, REQUIRED): the corrective action.
-  - `type` (string, REQUIRED): `replace | delete | rollback | noop | other`.
-  - `contentHash` (object, OPTIONAL): SHA-256 of corrected content (privacy-preserving — raw content SHOULD NOT be embedded).
-  - `note` (string, OPTIONAL): human-readable description of the fix.
-  - `source` (object, OPTIONAL): where the correct value came from — the trust field that
-    turns "the value changed" into "the value changed, and here is the proof of where the
-    correct value lives". Without it a correction is an assertion; with it, the correction
-    is verifiable against its reference.
-    - `type` (string, REQUIRED when `source` present): `schema | document | database | api | human | other`.
-    - `reference` (string, REQUIRED when `source` present): the locator — a schema path, a
-      document id + section, a live lookup, the human who confirmed it.
-- `timestamp` (string, REQUIRED): RFC 3339 correction timestamp.
-- `signature` (object, REQUIRED): same shape as AAR `signature` (`alg:"Ed25519"`, `kid`, `publicKey`, `canonicalization:"RFC8785"`, `sig`).
-- `metadata` (object, OPTIONAL): extension bag.
-
-### 4.1b Uncertainty record (`kind: "unknown"`)
-
-An ACR record may be an **uncertainty record** — a signed declaration that the agent does
-NOT know something, issued instead of guessing. This is the honest complement to a
-correction: `retract` records a mistake *after* it was caught; `unknown` records the
-uncertainty *before* a mistake could be made.
-
-An uncertainty record is shaped like an ACR record but:
-- carries `kind: "unknown"` (REQUIRED),
-- has a `subject` (string, REQUIRED) naming what the agent does not know,
-- has an optional `note` (string),
-- has **no** `supersedes` pointer and **no** `fix` — it corrects nothing, it only declines.
-
-This is what turns "the agent said so when it didn't know" from a behaviour you have to
-trust into a record you can verify.
-
-### 4.2 Chain semantics
-
-An ACR record links to the record it supersedes via `supersedes.digest` (a content hash, not
-just an id). This forms a hash chain: `receipt → correction → correction-of-correction`,
-verifiable without trusting the storage layer. Verifiers MUST verify the `supersedes.digest`
-matches the referenced record's canonical bytes.
-
-## 5. Signing and canonicalization
-
-Signing uses **Ed25519 over RFC 8785 (JCS)** canonical JSON. `signature.canonicalization`
-MUST be `"RFC8785"`.
-
-RFC 8785 (JSON Canonicalization Scheme) is chosen over a bespoke "JCS-sorted" description
-for one reason: **interoperability across implementations.** RFC 8785 specifies the exact
-rules for key ordering, string escaping (including Unicode and control characters), and
-number serialization. A verifier written in Rust, Go, or TypeScript that implements RFC 8785
-MUST reproduce byte-identical canonical output to this Python reference — which a
-"JCS-sorted, no whitespace, UTF-8" description does not guarantee.
-
-Signing procedure:
-1. Build the record with `signature.sig` set to `""`.
-2. Canonicalize the whole object per RFC 8785 (recursive key sort, RFC 8785 string/number
-   escaping, no insignificant whitespace).
-3. Sign the canonical bytes with the Ed25519 key selected by `signature.kid`.
-4. Base64url-encode the signature (no padding) into `signature.sig`.
-
-## 6. Verification
-
-1. Validate the record against the JSON Schema (see `schema/`).
-2. Recompute canonical bytes per RFC 8785 (with `signature.sig` empty), verify the Ed25519
-   signature with the key resolved by `signature.kid`.
-3. If `supersedes.digest` is resolvable, verify it matches the referenced record's canonical
-   bytes.
-
-## 7. Relationship to other standards
-
-- **AAR v1.0** — the receipt layer ACR extends. ACR reuses AAR's agent/principal/signature
-  shapes. NOTE: AAR v1.0 declares `canonicalization:"JCS-SORTED-UTF8-NOWS"`; ACR pins the
-  concrete, interoperable RFC 8785 scheme instead. Implementations bridging the two SHOULD
-  treat AAR's declaration as RFC 8785 in practice.
-- **Microsoft agent-governance-toolkit** — ships Ed25519 receipts with SHA-256 hash chaining
-  but is append-only by design; it has no errata/amendment record type. ACR provides the
-  missing correction semantics as a compatible layer.
-- **IETF draft-mih-sato-agent-accountability-composition** — the four-leg CAN/WHO/WHAT/AUDIT
-  accountability composition. ACR is complementary: that draft audits authorization, ACR
-  records correction.
-
-## 8. Compliance mapping (what ACR evidences, honestly)
-
-ACR *supports* — it does not certify — the following duties, for systems in scope of the
-EU AI Act:
-
-- Art 26(5) deployer monitor/suspend-and-inform → a signed `check_failed`/`human_flagged` correction.
-- Art 26(6) log retention ≥6 months → the append-only, hash-chained ledger.
-- Art 20 corrective actions + duty of information → the `fix` + `reason` fields.
-- Art 73 serious-incident reporting (≤2/10/15 days) → timestamped correction records.
-- NIST AI RMF MANAGE 4.3 / 4.1 / GOVERN 4.3 → incident tracking and documentation.
-
-ACR MUST NOT be marketed as "certifying" or "guaranteeing" EU AI Act compliance, and MUST NOT
-be described as satisfying Art 12 (automatic event logging), which is a distinct provider
-duty for high-risk systems.
-
-## 9. Completeness — the residual trust, and how to narrow it
-
-ACR gives strong **integrity** and **attribution**, but weaker **completeness** (§2). This
-section states the residual trust plainly and describes the layers that narrow it. This is
-the roadmap, not a claim — ACR v1.0 ships integrity + attribution only.
-
-**Residual trust, stated plainly:** completeness holds only relative to the set of
-independent signers that touch an action. A single-key, no-counterparty, air-gapped
-deployment is integrity-only. The design's job is to widen the set of independent observers
-as cheaply as possible.
-
-**Layer 1 — gapless sequence.** Add a monotonic per-agent `seq` alongside `prev_hash`. An
-auditor seeing `seq 41` then `46` knows four records are missing. Cheap; on its own
-defeatable by renumbering, so it only bites combined with Layer 2.
-
-**Layer 2 — external anchor.** Every K records or T seconds, submit the current head (or a
-Merkle root over the batch) to an append-only log the subject cannot rewrite — Sigstore
-Rekor, a CT-style witnessed log, or at minimum an RFC 3161 timestamp — and store the
-inclusion proof. Any record dated before the last anchor can no longer be inserted or
-dropped without the reconstructed head diverging from the anchored one. Trust collapses to
-"the interval since the last anchor."
-
-**Layer 3 — independent witness.** Anchoring alone does not stop *equivocation* (honest
-chain to auditor A, sanitised chain to auditor B). The CT fix: the anchor log is observed by
-≥1 independent witness that co-signs each head. Showing two histories now requires the
-witness to co-sign both — i.e. collusion.
-
-**Layer 4 — counterparty reconciliation.** For any action that mutates external state, have
-the affected resource return a signed acknowledgement embedding the record hash.
-Completeness becomes a reconciliation between two independently held logs: every mutation
-maps to an ack, every ack maps to a record. An unmatched ack is a hole you can point at.
-This only covers actions that hit a co-signing resource — which is exactly the scope where
-hiding matters.
-
-**The highest-leverage piece — keyed trigger authorities.** Give the *detector* its own key.
-Our honesty rule (§3) already says corrections fire from the guard/validator/human, not the
-agent's conscience. So let the guard co-sign the `check_failed` record on its own anchored
-chain. Now suppressing a caught failure means suppressing the guard itself, and the guard's
-chain has its own gaps and anchor. This costs almost nothing on top of v1.0 and closes the
-most important omission path: the agent quietly dropping its own caught mistakes.
-
-**Auditor's full predicate:** integrity is always checkable. Completeness is checkable
-*relative to the set of independent signers* — and the design widens that set one cheap layer
-at a time.
-
+This format provides evidence artifacts, not regulatory certification, retention,
+truthfulness, tamper-evident ledger integrity or automatic production readiness.

@@ -76,9 +76,11 @@ class CorrlogSigner:
     two-step model:
       record(action) → the eval sample as an action record
       retract(...)   → the correction superseding it (trigger=check_failed)
-    The returned receipt is the signed, hash-chained correction record that
+    The returned receipt is the signed correction record that
     `corrlog_core.verify` and the standalone verifier accept under the pinned
-    public half of this key.
+    public half of this key. Its `supersedes` pointer names the action record
+    built above, but that action record is not returned or persisted, so the
+    pointer cannot be resolved from the receipt alone.
     """
 
     def __init__(self, key: str) -> None:
@@ -94,6 +96,11 @@ class CorrlogSigner:
         agent_id = correction["agent_id"]      # the evaluated model
         subject_ref = correction["subject_ref"]  # the sample pointer
         meta = dict(correction.get("metadata") or {})
+        # `subject_ref` is used as action_target on the action record, but that
+        # record is superseded and not returned, so carry it on the receipt too:
+        # otherwise the WHAT being corrected is not recoverable from the signed
+        # receipt (only its eval_id/sample_id parts are).
+        meta["subject_ref"] = subject_ref
 
         # The evaluated model is the "agent" whose action is being corrected;
         # the sample reference is the action target. They stay separate.

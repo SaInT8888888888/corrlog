@@ -1,4 +1,4 @@
-"""End-to-end demo of the correction ledger. Run: python3 examples/demo.py"""
+"""End-to-end demo of the signed correction records. Run: python3 examples/demo.py"""
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -9,7 +9,7 @@ import tempfile
 priv, _ = generate_keypair()
 
 print("=" * 60)
-print("corrlog — the correction ledger")
+print("corrlog — the signed correction records")
 print("=" * 60)
 
 # --- The scenario: a forecast agent writes a wrong number, then a guard
@@ -49,7 +49,7 @@ c2 = retract(
 chain = [r1, c1, c2]
 
 print()
-print("Ledger (3 records, hash-linked):")
+print("Correction chain (3 records, hash-linked):")
 for i, r in enumerate(chain):
     trig = r.get("trigger", "action")
     reason = r.get("reason") or "(initial action)"
@@ -57,13 +57,13 @@ for i, r in enumerate(chain):
 
 print()
 print("Verification:")
-print(f"  all signatures valid:        {all(verify(r) for r in chain)}")
-print(f"  chain hash-linked + valid:   {verify_chain(chain)}")
+print(f"  all signatures valid:        {all(verify(r, priv.public_key()) for r in chain)}")
+print(f"  chain hash-linked + valid:   {verify_chain(chain, priv.public_key())}")
 
 # Tamper demonstration
 tampered = dict(r1)
 tampered["action"] = {**r1["action"], "type": "payment.execute"}
-print(f"  tampered record verifies:    {verify(tampered)}  (must be False)")
+print(f"  tampered record verifies:    {verify(tampered, priv.public_key())}  (must be False)")
 
 # Durable sink (fresh file each run)
 path = os.path.join(tempfile.gettempdir(), f"corrlog-demo-{os.getpid()}.jsonl")
@@ -71,7 +71,7 @@ sink = JsonlSink(path)
 for r in chain:
     sink.append(r)
 reloaded = sink.all()
-print(f"  durable sink round-trip:     {len(reloaded) == 3 and all(verify(r) for r in reloaded)}  ({path})")
+print(f"  JSONL round-trip:     {len(reloaded) == 3 and all(verify(r, priv.public_key()) for r in reloaded)}  ({path})")
 
 print()
 print("The story this tells an auditor:")
