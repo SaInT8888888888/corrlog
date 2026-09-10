@@ -38,59 +38,64 @@ Unicode case alone. It also covers two number classes.
 - ACR core fields carry non-integers as strings, so in practice this bites metadata and
   extension content that carries raw JSON numbers.
 
-### 3. Unsafe integers
+### 3. Integers outside the IEEE 754 domain
 
-- Integers with `|n| >= 2**53` are now **rejected** with `ValueError` and must be
-  represented as strings.
-- 0.2.1 accepted and signed them. Such a value cannot be re-signed by 0.2.2 without
-  changing its representation, which is itself a new assertion about the data.
+- A JSON number must be representable as an IEEE 754 binary64 value. Integers that cannot
+  be represented exactly are **rejected** with `ValueError` and must be carried as strings.
+  They are never silently rounded.
+- This applies to values such as `2**53 + 1` and `10**20 + 1`. Exactly representable
+  integers, including `2**53`, `10**16` and `10**20`, are accepted and serialize to the
+  same bytes a conforming implementation produces.
+- 0.2.1 accepted and signed integers of any magnitude. Such a value cannot be re-signed by
+  0.2.2 without changing its representation, which is itself a new assertion about the data.
 
 ### Measured effect on existing records
 
 Seven representative record shapes were signed with the published `corrlog-core` 0.2.1
-from PyPI, then verified with the built 0.2.2 wheel and with the standalone verifier.
-**Two still verify. Five do not.**
+from PyPI and then verified three ways: 0.2.1's own verifier, the 0.2.2 core and standalone
+verifier, and an independent native JavaScript canonicalizer with Node's Ed25519 primitive
+(calibrated against the six JCS fixtures and all 26 Appendix B samples).
 
-| Record content | Verifies under 0.2.2 |
-|---|---|
-| ASCII-only strings | Yes |
-| Non-ASCII value (`Zürich café`) | No |
-| Non-ASCII object key | No |
-| Non-integral float (`0.1`) | Yes |
-| Integral float (`56.0`) | No |
-| Exponent float (`1e16`) | No |
-| Integer at or above 2^53 | No |
+| Record content | 0.2.1 self-verify | 0.2.2 | Independent JS |
+|---|---|---|---|
+| ASCII-only strings | PASS | PASS | PASS |
+| Non-integral float `0.1` | PASS | PASS | PASS |
+| Integer `2**53` | PASS | PASS | PASS |
+| Non-ASCII value | PASS | FAIL | FAIL |
+| Non-ASCII object key | PASS | FAIL | FAIL |
+| Integral float `56.0` | PASS | FAIL | FAIL |
+| Exponent float `1e16` | PASS | FAIL | FAIL |
 
-A wider byte-level comparison over 20 shapes gave 11 identical and 9 differing. The
-record-level table above is the more useful measure, because it reflects what a stored
-record actually contains.
+0.2.2 agrees with the independent implementation on all seven shapes. A wider byte-level
+comparison over 20 shapes gave 11 identical and 9 differing. The record-level table is the
+more useful measure, because it reflects what a stored record actually contains.
 
-### What the break actually costs
+### What the break costs, stated accurately
 
-Each legacy record was also checked against an independent implementation (`rfc8785` plus
-`cryptography`, with no CorrLog code involved) to establish whether a conforming third
-party could ever have verified it under 0.2.1:
+Two things are true, and both belong in any disclosure:
 
-| Record content | Third party could verify under 0.2.1 | Verifies under 0.2.2 |
-|---|---|---|
-| ASCII-only strings | Yes | Yes |
-| Non-integral float `0.1` | Yes | Yes |
-| Non-ASCII value | No | No |
-| Non-ASCII object key | No | No |
-| Integral float `56.0` | No | No |
-| Exponent float `1e16` | No | No |
-| Integer at or above 2^53 | No, outside the reference implementation's domain | No |
+1. **For independent verification, nothing that a conforming implementation could verify
+   stops verifying.** Every shape the JavaScript implementation accepts, 0.2.2 also
+   accepts. The four shapes 0.2.2 rejects are ones no conforming implementation could
+   verify, because 0.2.1's canonicalization produced the wrong bytes for them.
+2. **Users of 0.2.1's own verifier do face a real behaviour change.** 0.2.1's in-library
+   verification accepted all seven shapes, including the four whose serialization was
+   nonconforming. A record that verified under 0.2.1's own verifier may now fail. That is
+   a compatibility break regardless of which side was conformant, and it must not be
+   described as though nothing was lost.
 
-The two shapes that survive are exactly the two a conforming implementation could verify.
-Every shape that breaks was already unverifiable outside 0.2.1, because 0.2.1's own
-canonicalization was what made it unverifiable. So on the evidence gathered, the
-compatibility break removes no capability that was actually working: it aligns the library
-with the specification, and records that a third party could verify continue to verify.
+Caveats to keep: this is seven representative shapes rather than an exhaustive sweep, and
+0.2.2 enforces the record schema at verification time, so a legacy record that violates the
+tightened schema could be rejected even with conformant signature bytes.
 
-That conclusion is drawn from seven representative shapes rather than an exhaustive sweep,
-and 0.2.2 also enforces the record schema at verification time, so a legacy record that
-violates the tightened schema could in principle be rejected even with conformant signature
-bytes. Both caveats should be stated alongside the disclosure rather than assumed away.
+### Disclosure wording
+
+> This update changes verification behavior. Some records that verified with 0.2.1 will no
+> longer verify with 0.2.2. The causes are corrected Unicode serialization, corrected
+> number serialization, and schema enforcement. Some affected signatures were
+> nonconforming; do not assume every newly rejected signature was invalid under RFC 8785.
+> Preserve original archives and trusted public keys, and assess legacy data before
+> upgrading. Re-signing is a new assertion, not a repair of the historical signature.
 
 ### No silent fallback
 
@@ -104,6 +109,31 @@ bytes. Both caveats should be stated alongside the disclosure rather than assume
   not make a legacy signature conformant.
 - Verify legacy records with the version that produced them. Verify records newly
   signed under 0.2.2 with any conforming implementation.
+
+---
+
+## Numeric domain (single policy, applied everywhere)
+
+One rule now governs numbers at construction, canonicalization, JSON parsing and
+verification: **a JSON number is accepted when it is exactly representable as an IEEE 754
+binary64 value.** Python's `int` and `float` are therefore the same JSON number whenever
+they hold the same value, so a canonical wire form re-parses and re-verifies. Integers that
+would need rounding are rejected rather than rounded and must be carried as strings.
+
+This replaces the earlier rule, which rejected any Python integer with `|n| >= 2**53`. That
+rule was applied at canonicalization but not at construction, so the library could accept a
+value such as `1e16`, sign it, write `10000000000000000`, and then reject that same record
+once the JSON was parsed back, because Python re-parses the literal as an `int`. A record
+the library accepted and signed could fail verification against an untouched file. The
+standalone verifier had the same problem from the other side, because the `rfc8785` Python
+package rejects large `int` values while accepting the equivalent `float`.
+
+The domain is now consistent, and both implementations agree byte-for-byte with an
+independent JavaScript canonicalizer across the wire spellings tested. Regression coverage
+is in `tests/test_numeric_roundtrip.py`: round-trip through both canonical and ordinary
+JSON, eight pairs of wire spellings that denote the same number, the CLI path for both
+file forms, rejection of inexact integers, and agreement with the equivalent double
+spelling.
 
 ---
 
@@ -167,7 +197,8 @@ Environments that pin dependencies should expect additional transitive packages.
 ### Cross-platform CI
 
 The draft pull request runs `.github/workflows/ci.yml` on all three operating systems
-across all four supported Python versions. **12 of 12 jobs pass**, conclusion `success`.
+across all four supported Python versions. **12 of 12 jobs pass**, conclusion `success`,
+on the revision containing the numeric fix (run `34437939325`).
 
 | | 3.10 | 3.11 | 3.12 | 3.13 |
 |---|---|---|---|---|
@@ -191,11 +222,19 @@ in four clean environments:
 
 | Artifact | SHA-256 |
 |---|---|
-| `corrlog_core-0.2.2-py3-none-any.whl` | `a7806502e7f9e10f2dcbae6816bbe7f827c659a21f03c9b654ebdd0e2481f0ec` |
-| `corrlog_inspect-0.1.3-py3-none-any.whl` | `5cec1bd1eeec6ea1f9a1161217b1c88b577c61daeee7e5a5ed077e76a5489274` |
+| `corrlog_core-0.2.2-py3-none-any.whl` | `d9a1330eb4b409077fdfcdb2cb228a348b2069adfff9bf8cb37c27c086e378eb` |
+| `corrlog_inspect-0.1.3-py3-none-any.whl` | `20f59fe08100d3200495522e44b9e7acba714d78e52081653bfb93b5c13bbe65` |
+
+These are the artifacts of the current revision, which includes the F-01 numeric fix.
 
 - **Installed packages**: full suite run against the installed wheels, from a test tree
-  containing no package source. **70 passed.** `pip check` clean.
+  containing no package source. **131 passed.** `pip check` clean. The suite grew from 70
+  cases to 131 with the numeric round-trip regression coverage.
+- **Numeric domain**: the report's own reproduction now passes for `1e16`, `1e20`, `1e21`,
+  `56.0` and `0.1`, in-memory and after a canonical JSON round-trip. All ten CLI cases from
+  the retest pass, including both canonical files that previously failed. Canonical output is
+  byte-identical to the independent JavaScript canonicalizer across every wire spelling
+  tested.
 - **Independent verifier environment**: `rfc8785`, `jsonschema` and `cryptography` only,
   with CorrLog absent (`find_spec("corrlog_core") is None`). `pip check` clean.
 - **Inspect without core**: `corrlog-inspect` 0.1.3 installs and imports with no core

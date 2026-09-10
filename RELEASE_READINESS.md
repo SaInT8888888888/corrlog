@@ -4,16 +4,28 @@
 
 **0.2.2 remains a reviewed remediation candidate, not approved for publication.**
 
-Two of the three original release gates are now closed. The cross-platform CI matrix has
-been executed and passes on all three operating systems across all four supported Python
-versions, and the release packages have been built and tested in fresh environments. The
-one gate still open is a maintainer decision: explicit approval of the release and
-disclosure of the legacy-signature compatibility change.
+Status of the release gates:
+
+1. **Cross-platform CI — closed.** Passes 12 of 12 jobs on Ubuntu, macOS and Windows across
+   Python 3.10 to 3.13, on the revision containing the F-01 numeric fix (`3c2d6ed`, run
+   `34437939325`).
+2. **Packages built and tested in fresh environments — closed.** Wheels built from the tested
+   revision, installed into clean environments, suite green, `pip check` clean, verifier
+   accept/reject confirmed.
+3. **Maintainer approval and disclosure of the compatibility change — open.** This is a
+   decision, not a test. The disclosure wording is drafted in `RELEASE_NOTES-0.2.2.md` and
+   was corrected after retest finding F-02 (see below).
+
+A final independent retest of the previous revision found a high-severity numeric
+round-trip defect (F-01) and a disproven compatibility claim (F-02). Both are fixed in this
+revision and the claim has been withdrawn. The earlier passing results were genuine but did
+not exercise the round-trip case, which is why the finding stood as a blocker.
 
 **Unqualified production readiness: no.** A tamper-evident ledger, automatic replay
-prevention, guaranteed delivery and complete audit history are not implemented. No merge,
-tag or PyPI publication has been performed. A branch push and a draft pull request were
-made so that the Windows and macOS CI legs could run.
+prevention, guaranteed delivery, complete disclosure of every event, truthfulness and
+complete audit history are not implemented. No merge, tag or PyPI publication has been
+performed. A branch push and a draft pull request were made so the Windows and macOS CI
+legs could run.
 
 This review starts from master `b85910dcbd9091cbb80583ca858e4286ecbc3815`, matching
 the handover exactly, on branch `remediation/release-readiness`. The supplied patch
@@ -24,9 +36,9 @@ See "Final revision and platform results" below for what has since been added on
 
 ## Final revision and platform results
 
-Tested code revision: `c0043fe`, the revision the CI matrix and the fresh-environment
-package tests below were run against, on the branch `remediation/release-readiness`
-(draft pull request against `master`, `https://github.com/SaInT8888888888/corrlog/pull/6`).
+Tested code revision: `3c2d6ed`, the revision the CI matrix and the fresh-environment package
+tests below were run against, on the branch `remediation/release-readiness` (draft pull
+request against `master`, `https://github.com/SaInT8888888888/corrlog/pull/6`).
 Documentation-only commits may sit above it; they change no packaged file, so the wheel
 hashes recorded below remain the tested artifacts. History on top of the base:
 
@@ -35,11 +47,15 @@ hashes recorded below remain the tested artifacts. History on top of the base:
 - `b38f6e3` `RELEASE_NOTES-0.2.2.md`
 - `f92e510` tests read fixtures as UTF-8 explicitly
 - `c0043fe` verifier inputs and schemas read as UTF-8 explicitly
+- `3c2d6ed` numeric domain consistency in core and verifier (F-01), plus
+  `tests/test_numeric_roundtrip.py`
 
 ### Cross-platform CI
 
-`.github/workflows/ci.yml` run `34434986898`, conclusion `success`, **12 of 12 jobs pass**:
-Ubuntu, macOS and Windows, each on Python 3.10, 3.11, 3.12 and 3.13.
+`.github/workflows/ci.yml` run `34437939325` on revision `3c2d6ed` (the numeric fix):
+conclusion `success`, **12 of 12 jobs pass** — Ubuntu, macOS and Windows, each on Python
+3.10, 3.11, 3.12 and 3.13. Run `34434986898` on `c0043fe` passed the same matrix before the
+numeric fix.
 
 An earlier run (`34434602489`, revision `b38f6e3`) passed Linux and macOS and **failed all
 four Windows jobs** at the `Complete suite including release security gates` step, with
@@ -72,10 +88,10 @@ Built from `c0043fe` and installed into four clean environments:
 
 | Artifact | SHA-256 |
 |---|---|
-| `corrlog_core-0.2.2-py3-none-any.whl` | `a7806502e7f9e10f2dcbae6816bbe7f827c659a21f03c9b654ebdd0e2481f0ec` |
-| `corrlog_inspect-0.1.3-py3-none-any.whl` | `5cec1bd1eeec6ea1f9a1161217b1c88b577c61daeee7e5a5ed077e76a5489274` |
+| `corrlog_core-0.2.2-py3-none-any.whl` | `d9a1330eb4b409077fdfcdb2cb228a348b2069adfff9bf8cb37c27c086e378eb` |
+| `corrlog_inspect-0.1.3-py3-none-any.whl` | `20f59fe08100d3200495522e44b9e7acba714d78e52081653bfb93b5c13bbe65` |
 
-- Installed-wheel suite, run from a test tree with no package source present: **70 passed**.
+- Installed-wheel suite, run from a test tree with no package source present: **131 passed**.
 - Independent verifier environment containing `rfc8785`, `jsonschema` and `cryptography`
   only, with CorrLog absent: `find_spec("corrlog_core") is None`.
 - Inspect installed without core: imports cleanly with no core present.
@@ -117,18 +133,104 @@ This is wider than the Unicode-only framing in the supplied migration evidence. 
 byte-level comparison over 20 shapes gave 11 identical and 9 differing. Disclosure to
 users should cover all three classes: Unicode, number formats, and unsafe integers.
 
-**What the break costs, measured with an independent implementation.** Each legacy record
-was checked against `rfc8785` plus `cryptography`, with no CorrLog code involved, to ask
-whether a conforming third party could ever have verified it under 0.2.1. The two shapes
-that still verify under 0.2.2 (ASCII-only, non-integral float) are exactly the two an
-independent implementation could verify. All five that break were already unverifiable
-outside 0.2.1, because 0.2.1's non-conformant canonicalization is what produced them. On
-this evidence the compatibility break removes no working capability.
+**What the break costs.** Each legacy record was checked three ways: 0.2.1's own verifier,
+0.2.2, and an independent native JavaScript canonicalizer with Node's Ed25519 primitive
+(calibrated against the six JCS fixtures and all 26 Appendix B samples).
 
-Caveats to carry: the conclusion rests on seven representative shapes rather than an
-exhaustive sweep, and 0.2.2 enforces the record schema at verification time, so a legacy
-record violating the tightened schema could in principle be rejected even with conformant
-signature bytes.
+| Record content | 0.2.1 self-verify | 0.2.2 | Independent JS |
+|---|---|---|---|
+| ASCII-only strings | PASS | PASS | PASS |
+| Non-integral float `0.1` | PASS | PASS | PASS |
+| Integer `2**53` | PASS | PASS | PASS |
+| Non-ASCII value | PASS | FAIL | FAIL |
+| Non-ASCII object key | PASS | FAIL | FAIL |
+| Integral float `56.0` | PASS | FAIL | FAIL |
+| Exponent float `1e16` | PASS | FAIL | FAIL |
+
+0.2.2 agrees with the independent implementation on all seven shapes.
+
+**Correction to an earlier claim in this report.** A previous revision of this report, and
+of the release notes, stated that the break "removes no capability that was actually
+working" and that every affected record was already unverifiable independently. Retest
+finding F-02 disproved that, and the claim has been withdrawn:
+
+- The claim rested on the Python `rfc8785` package rejecting integers at or above `2**53`.
+  That is a restriction of one Python implementation, not an RFC 8785 requirement. `2**53`
+  is exactly representable as binary64, and the JavaScript checker verifies a
+  published-0.2.1 record containing it. The earlier text treated an implementation
+  limitation as a specification fact.
+- Separately, 0.2.1's own in-library verification accepted all seven shapes. A record that
+  verified under 0.2.1's verifier can fail under 0.2.2, which is a real compatibility break
+  irrespective of which side was conformant.
+
+After the F-01 numeric fix, the counterexample is resolved at the source rather than by
+softening the wording: `2**53` now verifies under both 0.2.2 implementations, and 0.2.2
+agrees with the independent JavaScript checker on every shape tested.
+
+Caveats to carry: seven representative shapes rather than an exhaustive sweep, and 0.2.2
+enforces the record schema at verification time, so a legacy record violating the tightened
+schema could be rejected even with conformant signature bytes.
+
+## Final retest round and remediation (2026-09-10)
+
+An independent retest of revision `3c9e27f` raised two findings. Both are accepted and
+addressed in this revision.
+
+### F-01: an accepted signed record failed canonical JSON round-trip (high)
+
+A record built with `metadata={"value": 1e16}` verified, but the same record re-parsed from
+its own canonical wire form did not, and the standalone verifier rejected the canonical file
+while accepting the ordinary one.
+
+Reproduced on the installed wheel: `test_numeric_roundtrip.py` equivalents failed for `1e16`
+and `1e20`, and the report's CLI commands reproduced `1e+16-canonical.json` exiting 1 while
+`1e+16-normal.json` exited 0.
+
+Root cause: the numeric domain was applied inconsistently. Construction accepted a float
+`1e16`, canonicalization wrote `10000000000000000`, and Python re-parses that literal as an
+`int`. The old integer rule rejected any Python integer with `|n| >= 2**53`, so the library
+invalidated a record it had accepted and signed. The standalone verifier failed from the
+other side, because the `rfc8785` Python package rejects large `int` values while accepting
+the equivalent `float`.
+
+Fix, one policy applied at construction, canonicalization, parsing and verification: a JSON
+number is accepted when it is exactly representable as an IEEE 754 binary64 value. Exactly
+representable integers, including `2**53` and `10**16`, are normalised to that double and
+serialize per ES6 rules. Integers that would need rounding, such as `2**53 + 1`, are
+rejected rather than rounded. The verifier normalises parsed integers into the same domain
+before delegating to `rfc8785`, so independence is preserved and both implementations share
+one domain.
+
+Verification after the fix:
+
+- All ten of the report's CLI cases pass, including both canonical files that previously
+  failed.
+- Round-trip holds for 15 values through canonical JSON, ordinary JSON and the CLI.
+- Wire-spelling pairs (`1e+16` and `10000000000000000`, `56.0` and `56`, and six more) are
+  byte-identical and verify with the same signature.
+- Inexact integers are rejected at canonicalization and at construction.
+- Canonical output is byte-identical to the independent JavaScript canonicalizer for every
+  spelling tested.
+
+### F-02: the compatibility disclosure overstated what is preserved (accepted)
+
+The release notes claimed the break "removes no capability that was actually working" and
+that affected records were already unverifiable independently. That is withdrawn and
+replaced. The claim rested on a Python package's integer-domain restriction being treated as
+an RFC 8785 requirement, and it ignored that 0.2.1's own verification was working behaviour.
+Details and the corrected wording are in the legacy section above and in
+`RELEASE_NOTES-0.2.2.md`.
+
+### Regression coverage added
+
+`tests/test_numeric_roundtrip.py`, 61 cases: canonical and ordinary JSON round-trips across
+15 values, eight wire-spelling pairs asserted to canonicalize identically, the CLI path for
+both file forms, inexact-integer rejection at both entry points, and agreement between
+exactly representable integers and their double spellings. The existing suite's expectation
+that `2**53` must be rejected was updated to the corrected policy, with `2**53 + 1` and
+`2**64 + 1` retaining rejection.
+
+Suite after the change: **131 passed** (was 70).
 
 ## Fixes and review of the supplied patch
 
