@@ -1,0 +1,629 @@
+diff --git a/corrlog_core/__init__.py b/corrlog_core/__init__.py
+index df5049e..02e87ae 100644
+--- a/corrlog_core/__init__.py
++++ b/corrlog_core/__init__.py
+@@ -11,6 +11,7 @@ from __future__ import annotations
+ import base64
+ import hashlib
+ import json
++import math
+ import uuid
+ from datetime import datetime, timezone
+ from typing import Any, Protocol
+@@ -30,32 +31,148 @@ VALID_SOURCE_TYPES = ("schema", "document", "database", "api", "human", "other")
+ # ---------------------------------------------------------------------------
+ # Canonical JSON per RFC 8785 (JCS — JSON Canonicalization Scheme)
+ # ---------------------------------------------------------------------------
++_JCS_ESCAPES = {
++    0x08: "\\b", 0x09: "\\t", 0x0A: "\\n", 0x0C: "\\f", 0x0D: "\\r",
++    0x22: '\\"', 0x5C: "\\\\",
++}
++
++
++def _jcs_escape_string(s: str) -> str:
++    """RFC 8785 §3.2.2.2 string serialization.
++
++    Only '"', '\\', and U+0000–U+001F are escaped; everything else is emitted
++    as-is (raw UTF-8 in the output). A lone surrogate is an error, as the RFC
++    requires. (The previous implementation used ``ensure_ascii=True``, which
++    escaped every non-ASCII character as ``\\uXXXX``; that is *not* JCS and
++    produces canonical bytes no conforming implementation reproduces.)
++    """
++    out = ['"']
++    for ch in s:
++        o = ord(ch)
++        if o in _JCS_ESCAPES:
++            out.append(_JCS_ESCAPES[o])
++        elif o < 0x20:
++            out.append("\\u%04x" % o)
++        elif 0xD800 <= o <= 0xDFFF:
++            raise ValueError(
++                "cannot canonicalize a lone surrogate; RFC 8785 3.2.2.2 "
++                "requires a compliant implementation to terminate with an error"
++            )
++        else:
++            out.append(ch)
++    out.append('"')
++    return "".join(out)
++
++
++def _jcs_number(value: Any) -> str:
++    """RFC 8785 §3.2.2.3 number serialization (ES6 ``Number::toString``).
++
++    Differs from Python's ``repr`` in ways that matter for interoperability:
++    56.0 renders as ``56``, 1e16 as ``10000000000000000`` (not ``1e+16``) and
++    1e-7 as ``1e-7`` (not ``1e-07``).
++    """
++    if isinstance(value, bool):  # bool is an int subclass; never a JSON number
++        raise TypeError("bool is not a JSON number")
++    if isinstance(value, int):
++        if abs(value) < 2 ** 53:  # exactly representable as a double
++            return str(value)
++        value = float(value)
++    x = float(value)
++    if math.isnan(x) or math.isinf(x):
++        raise ValueError("Out of range IEEE 754 number cannot be serialized")
++    if x == 0.0:
++        return "0"
++
++    r = repr(x)
++    neg = r.startswith("-")
++    if neg:
++        r = r[1:]
++    if "e" in r:
++        mant, _, exp = r.partition("e")
++        exp = int(exp)
++        digits = mant.replace(".", "")
++        n = (mant.index(".") if "." in mant else len(mant)) + exp
++    elif "." in r:
++        int_part, frac = r.split(".")
++        digits = int_part + frac
++        n = len(int_part)
++    else:
++        digits, n = r, len(r)
++
++    lead = len(digits) - len(digits.lstrip("0"))
++    digits = digits.lstrip("0") or "0"
++    n -= lead
++    digits = digits.rstrip("0") or "0"
++    k = len(digits)
++
++    if k <= n <= 21:
++        s = digits + "0" * (n - k)
++    elif 0 < n <= 21:
++        s = digits[:n] + "." + digits[n:]
++    elif -6 < n <= 0:
++        s = "0." + "0" * (-n) + digits
++    elif k == 1:
++        s = digits + "e" + ("+" if n - 1 >= 0 else "-") + str(abs(n - 1))
++    else:
++        s = digits[0] + "." + digits[1:] + "e" + ("+" if n - 1 >= 0 else "-") + str(abs(n - 1))
++    return ("-" if neg else "") + s
++
++
++def _jcs_render(obj: Any, out: list[str]) -> None:
++    if obj is None:
++        out.append("null")
++    elif obj is True:
++        out.append("true")
++    elif obj is False:
++        out.append("false")
++    elif isinstance(obj, str):
++        out.append(_jcs_escape_string(obj))
++    elif isinstance(obj, (int, float)):
++        out.append(_jcs_number(obj))
++    elif isinstance(obj, dict):
++        out.append("{")
++        for i, key in enumerate(sorted(obj, key=_jcs_sort_key)):
++            if not isinstance(key, str):
++                raise TypeError("JSON object keys must be strings")
++            if i:
++                out.append(",")
++            out.append(_jcs_escape_string(key))
++            out.append(":")
++            _jcs_render(obj[key], out)
++        out.append("}")
++    elif isinstance(obj, (list, tuple)):
++        out.append("[")
++        for i, item in enumerate(obj):
++            if i:
++                out.append(",")
++            _jcs_render(item, out)
++        out.append("]")
++    else:
++        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
++
++
++def _jcs_sort_key(key: str) -> bytes:
++    """RFC 8785 §3.2.3: sort object keys by UTF-16 code units.
++
++    Python's default ``sorted()`` compares by Unicode code point, which orders
++    astral-plane keys differently from UTF-16 and so diverges from JCS on any
++    object with a non-BMP key.
++    """
++    return key.encode("utf-16-be", "surrogatepass")
++
++
+ def canonical_json(obj: dict[str, Any]) -> bytes:
+     """Return RFC 8785 (JCS) canonical bytes.
+ 
+-    RFC 8785 requires: recursive key sort by UTF-16 code unit order, no
+-    insignificant whitespace, and specific string escaping — control
+-    characters and non-ASCII MUST be escaped as ``\\uXXXX``/surrogate pairs so
+-    every conforming implementation (Python, Rust, Go, TS) produces
+-    byte-identical output. Python's ``json.dumps`` with ``ensure_ascii=True``
+-    and ``separators=(",", ":")`` satisfies this for strings; numbers MUST be
+-    serialized per RFC 8785 §3.2.3 (ES6 Number::toString) — this reference
+-    avoids the float ambiguity by representing non-integer values as strings
+-    (see `record`/`retract`), matching AAR's practice.
++    Recursive key sort by UTF-16 code unit order, RFC 8785 string escaping
++    (non-ASCII emitted raw, not ``\\uXXXX``), ES6 number serialization, no
++    insignificant whitespace, UTF-8 output. Validated against all six official
++    JCS conformance vectors (cyberphone/json-canonicalization) and byte-compared
++    against an independent implementation (``rfc8785``) over randomized inputs.
+     """
+-    def _sorted(o: Any) -> Any:
+-        if isinstance(o, dict):
+-            # sort_keys sorts by Unicode code point, which matches UTF-16
+-            # code unit order for the BMP (all keys here are ASCII-safe).
+-            return {k: _sorted(v) for k, v in sorted(o.items())}
+-        if isinstance(o, list):
+-            return [_sorted(v) for v in o]
+-        return o
+-
+-    return json.dumps(
+-        _sorted(obj), separators=(",", ":"), ensure_ascii=True, sort_keys=True,
+-        allow_nan=False,
+-    ).encode("utf-8")
++    out: list[str] = []
++    _jcs_render(obj, out)
++    return "".join(out).encode("utf-8")
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -85,8 +202,15 @@ def load_private_key(seed: str) -> ed25519.Ed25519PrivateKey:
+     """
+     s = seed.strip()
+     if s.startswith(("sk_", "priv_", "ed25519:")):
+-        # allow a small prefix for readability; strip it
+-        s = s.split(":", 1)[-1] if ":" in s else s[2:] if s.startswith("sk_") else s[5:]
++        # allow a small prefix for readability; strip it. (The previous version
++        # stripped only 2 characters for "sk_", which corrupted the seed and made
++        # the documented sk_ prefix unusable.)
++        if s.startswith("ed25519:"):
++            s = s.split(":", 1)[1]
++        elif s.startswith("priv_"):
++            s = s[5:]
++        else:
++            s = s[3:]
+     try:
+         raw = base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+     except Exception:
+@@ -331,8 +455,10 @@ def verify(record: dict[str, Any], public_key: ed25519.Ed25519PublicKey | None =
+     If `public_key` is None, the key embedded in `record["signature"]["publicKey"]`
+     is used (self-authenticating). Pass a key explicitly to pin trust to a known key.
+     """
+-    sig_meta = record.get("signature") or {}
+-    if sig_meta.get("alg") != "Ed25519":
++    if not isinstance(record, dict):
++        return False
++    sig_meta = record.get("signature")
++    if not isinstance(sig_meta, dict) or sig_meta.get("alg") != "Ed25519":
+         return False
+     if sig_meta.get("canonicalization") != CANONICALIZATION:
+         return False
+@@ -371,12 +497,26 @@ def verify(record: dict[str, Any], public_key: ed25519.Ed25519PublicKey | None =
+ 
+ def verify_chain(records: list[dict[str, Any]], public_key: ed25519.Ed25519PublicKey | None = None) -> bool:
+     """Verify a chain of records: each signature valid, and each correction's
+-    `supersedes.digest` matches the canonical bytes of the prior record."""
++    `supersedes.digest` matches the canonical bytes of the prior record.
++
++    An empty list is NOT a valid chain, and the first record must be a root
++    (it must not itself supersede anything). Without that check any *suffix* of
++    a chain verified -- dropping the original record, or presenting a single
++    orphaned correction, was indistinguishable from a complete history.
++    """
++    if not records:
++        return False
+     for i, rec in enumerate(records):
+         if not verify(rec, public_key):
+             return False
+         if i == 0:
++            if isinstance(rec, dict) and rec.get("supersedes"):
++                # A chain presented for verification must start at a root;
++                # an orphaned correction means the history was truncated.
++                return False
+             continue
++        if not isinstance(rec, dict):
++            return False
+         sup = rec.get("supersedes")
+         if not sup:
+             # A chain where a later record doesn't supersede is broken.
+diff --git a/corrlog_inspect/README.md b/corrlog_inspect/README.md
+index b63dffd..3a3877b 100644
+--- a/corrlog_inspect/README.md
++++ b/corrlog_inspect/README.md
+@@ -58,10 +58,19 @@ inspect eval your_task.py --model ...
+ 
+ With both variables set, `enabled()` returns true, Inspect discovers the hook
+ through the `inspect_ai` entry point, and every failing sample produces a
+-signed receipt that is appended to the file at `CORRLOG_RECEIPTS_PATH` — one
+-receipt per failing sample, durable and hash-chained by file order. A sample
++signed receipt that is appended to the file at `CORRLOG_RECEIPTS_PATH`: one
++receipt per failing sample, durable, each independently verifiable. A sample
+ that scores correct produces nothing.
+ 
++Known limitation (2026-09-10 validation): the file is NOT a hash chain. Each
++receipt carries a `supersedes` pointer to the action record it corrects, but
++that action record is not persisted, so `supersedes.digest` cannot be checked
++and reordering or deleting receipt lines is not detectable from the file alone.
++Verify receipts individually (or treat the file as an untrusted transport), and
++do not rely on file order as evidence. If `corrlog-core` is not installed,
++`enabled()` returns false and the hook stays inert rather than silently
++emitting nothing.
++
+ The hook requires both variables deliberately: a signing key without a
+ receipts file would sign and discard (the 0.1.0 behaviour, fixed in 0.1.1).
+ Signing or file-write failures are logged and never break the eval run.
+diff --git a/corrlog_inspect/_corrlog.py b/corrlog_inspect/_corrlog.py
+index e66e491..4ed977e 100644
+--- a/corrlog_inspect/_corrlog.py
++++ b/corrlog_inspect/_corrlog.py
+@@ -76,9 +76,11 @@ class CorrlogSigner:
+     two-step model:
+       record(action) → the eval sample as an action record
+       retract(...)   → the correction superseding it (trigger=check_failed)
+-    The returned receipt is the signed, hash-chained correction record that
++    The returned receipt is the signed correction record that
+     `corrlog_core.verify` and the standalone verifier accept under the pinned
+-    public half of this key.
++    public half of this key. Its `supersedes` pointer names the action record
++    built above, but that action record is not returned or persisted, so the
++    pointer cannot be resolved from the receipt alone.
+     """
+ 
+     def __init__(self, key: str) -> None:
+@@ -94,6 +96,11 @@ class CorrlogSigner:
+         agent_id = correction["agent_id"]      # the evaluated model
+         subject_ref = correction["subject_ref"]  # the sample pointer
+         meta = dict(correction.get("metadata") or {})
++        # `subject_ref` is used as action_target on the action record, but that
++        # record is superseded and not returned, so carry it on the receipt too:
++        # otherwise the WHAT being corrected is not recoverable from the signed
++        # receipt (only its eval_id/sample_id parts are).
++        meta.setdefault("subject_ref", subject_ref)
+ 
+         # The evaluated model is the "agent" whose action is being corrected;
+         # the sample reference is the action target. They stay separate.
+diff --git a/corrlog_inspect/hooks.py b/corrlog_inspect/hooks.py
+index 4f3d1a5..ded80b6 100644
+--- a/corrlog_inspect/hooks.py
++++ b/corrlog_inspect/hooks.py
+@@ -19,7 +19,14 @@ Design choices worth knowing:
+   * One receipt per failing *sample*, aggregating every scorer that returned
+     INCORRECT into that receipt's metadata — not one receipt per scorer.
+   * Every signed receipt is appended to the JSONL file at
+-    CORRLOG_RECEIPTS_PATH (append-only, durable, hash-chained by file order).
++    CORRLOG_RECEIPTS_PATH (append-only, durable, each receipt independently
++    signed). NOTE: the file is NOT a hash chain. The receipt carries a
++    `supersedes` pointer at the action record, but that record is not persisted,
++    so the pointer is not checkable and line deletion/reordering is not
++    detectable from the file alone. Verify receipts individually.
++  * Without corrlog-core (the optional `core` extra) nothing can be signed, so
++    enabled() reports False rather than claiming to be active and emitting
++    nothing.
+   * Signing or persistence failures are caught and logged, never raised: a
+     correction-log hook must not be able to fail an eval run.
+ """
+@@ -45,6 +52,20 @@ KEY_ENV = "CORRLOG_SIGNING_KEY"
+ PATH_ENV = "CORRLOG_RECEIPTS_PATH"
+ 
+ 
++def _core_available() -> bool:
++    """True if corrlog_core (the signing dependency) can be imported.
++
++    corrlog-inspect installs without corrlog-core (the `core` extra is
++    optional). Without it, nothing can be signed, so the hook must report
++    itself disabled rather than claiming to be enabled and emitting nothing.
++    """
++    try:
++        import corrlog_core  # noqa: F401
++        return True
++    except Exception:
++        return False
++
++
+ def _is_failing(score: Score) -> bool:
+     """True if this score represents a failure (INCORRECT).
+ 
+@@ -67,12 +88,23 @@ class CorrlogReceiptHook(Hooks):
+     ) -> None:
+         # Allow injection for testing; default to the real corrlog seam.
+         key = os.environ.get(KEY_ENV, "")
+-        self._signer: Signer | None = signer or (CorrlogSigner(key) if key else None)
++        if signer is None and key and not _core_available():
++            # Actionable, single-line diagnosis instead of a per-sample traceback
++            # for what is a missing optional dependency.
++            logger.error(
++                "corrlog: %s is set but corrlog-core is not installed, so no receipt "
++                "can be signed. Install it with: pip install 'corrlog-inspect[core]'. "
++                "The hook will stay inert for this run.",
++                KEY_ENV,
++            )
++        self._signer: Signer | None = signer or (
++            CorrlogSigner(key) if key and _core_available() else None
++        )
+         # Durable append-only sink; built from CORRLOG_RECEIPTS_PATH unless
+         # injected. A broken sink must never break the eval, so construction
+         # and every append are guarded and logged.
+         self._sink: Any | None = sink
+-        if self._sink is None and os.environ.get(PATH_ENV):
++        if self._sink is None and os.environ.get(PATH_ENV) and _core_available():
+             try:
+                 from corrlog_core import JsonlSink
+ 
+@@ -98,7 +130,9 @@ class CorrlogReceiptHook(Hooks):
+         # or write a usable receipt).
+         key = os.environ.get(KEY_ENV, "").strip()
+         path = os.environ.get(PATH_ENV, "").strip()
+-        return bool(key and path)
++        # A configured key with no signing library cannot produce receipts:
++        # report disabled rather than enabled-but-silently-inert.
++        return bool(key and path and _core_available())
+ 
+     async def on_task_start(self, data: TaskStart) -> None:
+         # spec.model is the evaluated model string (e.g. "openai/gpt-4o").
+diff --git a/tests/test_sink_hardening.py b/tests/test_sink_hardening.py
+index af0fce2..2c2c1c1 100644
+--- a/tests/test_sink_hardening.py
++++ b/tests/test_sink_hardening.py
+@@ -98,20 +98,38 @@ def test_record_rejects_nan_metadata():
+         )
+ 
+ 
+-# ---- F5: lone surrogates must persist, not raise UnicodeEncodeError ----
+-def test_sink_persists_lone_surrogates():
++# ---- F5 (revised): lone surrogates are rejected at signing, sink stays safe ----
++def test_lone_surrogates_are_rejected_at_signing():
++    """RFC 8785 3.2.2.2: a compliant JCS implementation MUST terminate with an
++    error on a lone surrogate. It cannot be canonicalized, so it cannot be
++    signed, so it must never reach a sink through the normal path.
++
++    This replaces the earlier F5 test, which asserted the opposite (that a
++    record containing a lone surrogate sign-then-persisted). That behaviour was
++    only possible because canonicalization escaped non-ASCII as \\uXXXX, which
++    is not JCS and made such records unverifiable by conforming third parties.
++    """
+     priv, _ = generate_keypair()
+     # A genuinely UNPAIRED lone surrogate (high surrogate with no low partner).
+-    # json.loads keeps it as-is (unlike a valid pair, which coalesces to the
+-    # astral character), so the round-trip must be lossless.
+-    r = retract(
+-        prior_record=record(agent_id="m", action_type="t", private_key=priv),
+-        reason="r", trigger="check_failed", agent_id="m", private_key=priv,
+-        metadata={"text": "truncated \ud800 utf16"},
+-    )
++    with pytest.raises(ValueError):
++        retract(
++            prior_record=record(agent_id="m", action_type="t", private_key=priv),
++            reason="r", trigger="check_failed", agent_id="m", private_key=priv,
++            metadata={"text": "truncated \ud800 utf16"},
++        )
++
++
++def test_sink_still_survives_a_manually_built_lone_surrogate_record():
++    """Defence in depth: even if a record with a lone surrogate arrives by some
++    other path (hand-built dict, foreign producer), the sink must not raise
++    UnicodeEncodeError and must round-trip losslessly."""
++    rec = {
++        "correctionId": "hand-built",
++        "metadata": {"text": "truncated \ud800 utf16"},
++    }
+     with tempfile.TemporaryDirectory() as td:
+         p = os.path.join(td, "s.jsonl")
+-        JsonlSink(p).append(r)  # must NOT raise UnicodeEncodeError
++        JsonlSink(p).append(rec)  # must NOT raise UnicodeEncodeError
+         line = open(p, encoding="utf-8").read()
+         assert "\\ud800" in line  # escaped, strict ASCII JSON
+         recs = JsonlSink(p).all()
+diff --git a/verifier/standalone.py b/verifier/standalone.py
+index ec09e8e..8843b85 100644
+--- a/verifier/standalone.py
++++ b/verifier/standalone.py
+@@ -19,6 +19,17 @@ Exit code 0 if every record (and the chain, if --chain) verifies, else 1.
+ The point: if our corrlog SDK ever produced a bad signature, THIS file — which
+ shares no code with it — would reject it. It is the "trust me, here's the
+ verification" artifact that a skeptic can read and run in under a minute.
++
++SCOPE WARNING (see SECURITY.md). This file is independent of corrlog's *code*
++but historically shared its *canonicalization assumption*: both used
++``json.dumps(..., ensure_ascii=True)``, which is not RFC 8785. It therefore
++could not detect a canonicalization divergence between corrlog and a conforming
++third-party implementation, the exact class of failure it exists to catch.
++Both implementations are now conformant and are checked against the official
++JCS test vectors and an independent implementation, but the lesson stands:
++an in-tree verifier validates the code, not the assumptions. For a genuinely
++independent check, verify against a verifier built on a third-party RFC 8785
++implementation.
+ """
+ from __future__ import annotations
+ 
+@@ -26,6 +37,7 @@ import argparse
+ import base64
+ import hashlib
+ import json
++import math
+ import sys
+ from typing import Any
+ 
+@@ -41,31 +53,127 @@ except ImportError:  # pragma: no cover
+ # RFC 8785 (JCS) canonicalization — implemented from the RFC text, not copied
+ # from corrlog. See RFC 8785 §3.
+ # ---------------------------------------------------------------------------
+-def _jcs(o: Any) -> Any:
+-    """Recursively sort object keys (RFC 8785 §3.2.3: UTF-16 code-unit order).
+-
+-    Python sorts str by Unicode code point; for the BMP (which all ACR keys
+-    are), code-point order == UTF-16 code-unit order, so `sorted()` is correct.
+-    """
+-    if isinstance(o, dict):
+-        return {k: _jcs(v) for k, v in sorted(o.items())}
+-    if isinstance(o, list):
+-        return [_jcs(v) for v in o]
+-    return o
++_JCS_ESCAPES = {
++    0x08: "\\b", 0x09: "\\t", 0x0A: "\\n", 0x0C: "\\f", 0x0D: "\\r",
++    0x22: '\\"', 0x5C: "\\\\",
++}
++
++
++def _jcs_escape_string(s: str) -> str:
++    """RFC 8785 §3.2.2.2: escape only '"', '\\' and U+0000-U+001F; emit the
++    rest as-is. A lone surrogate is an error per the RFC."""
++    out = ['"']
++    for ch in s:
++        o = ord(ch)
++        if o in _JCS_ESCAPES:
++            out.append(_JCS_ESCAPES[o])
++        elif o < 0x20:
++            out.append("\\u%04x" % o)
++        elif 0xD800 <= o <= 0xDFFF:
++            raise ValueError("lone surrogate is not canonicalizable (RFC 8785 3.2.2.2)")
++        else:
++            out.append(ch)
++    out.append('"')
++    return "".join(out)
++
++
++def _jcs_number(value) -> str:
++    """RFC 8785 §3.2.2.3 number serialization (ES6 Number::toString)."""
++    if isinstance(value, bool):
++        raise TypeError("bool is not a JSON number")
++    if isinstance(value, int):
++        if abs(value) < 2 ** 53:
++            return str(value)
++        value = float(value)
++    x = float(value)
++    if math.isnan(x) or math.isinf(x):
++        raise ValueError("Out of range IEEE 754 number cannot be serialized")
++    if x == 0.0:
++        return "0"
++    r = repr(x)
++    neg = r.startswith("-")
++    if neg:
++        r = r[1:]
++    if "e" in r:
++        mant, _, exp = r.partition("e")
++        exp = int(exp)
++        digits = mant.replace(".", "")
++        n = (mant.index(".") if "." in mant else len(mant)) + exp
++    elif "." in r:
++        int_part, frac = r.split(".")
++        digits = int_part + frac
++        n = len(int_part)
++    else:
++        digits, n = r, len(r)
++    lead = len(digits) - len(digits.lstrip("0"))
++    digits = digits.lstrip("0") or "0"
++    n -= lead
++    digits = digits.rstrip("0") or "0"
++    k = len(digits)
++    if k <= n <= 21:
++        s = digits + "0" * (n - k)
++    elif 0 < n <= 21:
++        s = digits[:n] + "." + digits[n:]
++    elif -6 < n <= 0:
++        s = "0." + "0" * (-n) + digits
++    elif k == 1:
++        s = digits + "e" + ("+" if n - 1 >= 0 else "-") + str(abs(n - 1))
++    else:
++        s = digits[0] + "." + digits[1:] + "e" + ("+" if n - 1 >= 0 else "-") + str(abs(n - 1))
++    return ("-" if neg else "") + s
++
++
++def _jcs_render(obj: Any, out: list) -> None:
++    if obj is None:
++        out.append("null")
++    elif obj is True:
++        out.append("true")
++    elif obj is False:
++        out.append("false")
++    elif isinstance(obj, str):
++        out.append(_jcs_escape_string(obj))
++    elif isinstance(obj, (int, float)):
++        out.append(_jcs_number(obj))
++    elif isinstance(obj, dict):
++        out.append("{")
++        for i, key in enumerate(sorted(obj, key=lambda k: k.encode("utf-16-be", "surrogatepass"))):
++            if not isinstance(key, str):
++                raise TypeError("JSON object keys must be strings")
++            if i:
++                out.append(",")
++            out.append(_jcs_escape_string(key))
++            out.append(":")
++            _jcs_render(obj[key], out)
++        out.append("}")
++    elif isinstance(obj, (list, tuple)):
++        out.append("[")
++        for i, item in enumerate(obj):
++            if i:
++                out.append(",")
++            _jcs_render(item, out)
++        out.append("]")
++    else:
++        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+ 
+ 
+ def canonical_bytes(obj: Any) -> bytes:
+     """RFC 8785 canonical JSON bytes.
+ 
+-    ensure_ascii=True gives RFC 8785 §3.2.2 string escaping (control chars and
+-    non-ASCII as \\uXXXX, so every conforming implementation produces identical
+-    bytes). Numbers: RFC 8785 §3.2.3.3 mandates ES6 Number::toString; this
+-    verifier rejects any JSON number that would be ambiguous, and ACR records
+-    carry non-integer values as strings (see SPEC §5).
++    Key sort is by UTF-16 code unit (§3.2.3); strings escape only what §3.2.2.2
++    requires, with non-ASCII emitted raw as UTF-8; numbers follow ES6
++    Number::toString (§3.2.2.3). Validated against the official JCS conformance
++    vectors and against an independent implementation.
++
++    (An earlier version used ``json.dumps(..., ensure_ascii=True)``, which
++    escaped every non-ASCII character as \\uXXXX and used Python's float repr.
++    That is not JCS: it produces canonical bytes no conforming implementation
++    reproduces, so records carrying non-ASCII text failed third-party
++    verification. It also silently pinned the same wrong assumption as the SDK,
++    which is why this verifier did not catch the divergence.)
+     """
+-    return json.dumps(
+-        _jcs(obj), separators=(",", ":"), ensure_ascii=True, sort_keys=True
+-    ).encode("utf-8")
++    out: list = []
++    _jcs_render(obj, out)
++    return "".join(out).encode("utf-8")
+ 
+ 
+ def _b64url_decode(s: str) -> bytes:
+@@ -131,12 +239,21 @@ def verify_record(record: Any, pinned_pub: ed25519.Ed25519PublicKey | None = Non
+ 
+ 
+ def verify_chain(records: list[Any], pinned_pub: ed25519.Ed25519PublicKey | None = None) -> tuple[bool, str]:
+-    """Verify each record's signature AND the supersedes hash chain."""
++    """Verify each record's signature AND the supersedes hash chain.
++
++    An empty list is not a chain, and the first record must be a root (no
++    supersedes pointer) -- otherwise any suffix of a chain verifies.
++    """
++    if not records:
++        return False, "no records presented"
+     for i, rec in enumerate(records):
+         ok, reason = verify_record(rec, pinned_pub)
+         if not ok:
+             return False, f"record {i}: {reason}"
+         if i == 0:
++            if isinstance(rec, dict) and rec.get("supersedes"):
++                return False, ("record 0: carries a supersedes pointer but no "
++                               "predecessor was presented (truncated chain)")
+             continue
+         sup = rec.get("supersedes")
+         if not isinstance(sup, dict):

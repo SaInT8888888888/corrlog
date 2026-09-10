@@ -1,0 +1,165 @@
+
+ID       CLAIM  VERDICT  SCENARIO
+--------------------------------------------------------------------------------------------------------------
+C1-01    1      PASS     create a correction record (retract) and verify it
+C1-02    1      PASS     correction record carries every ACR-required field
+C1-03    1      PASS     create an action record (record)
+C1-04    1      PASS     create an uncertainty record (unknown)
+C1-05    1      PASS     source/trust field recorded when supplied
+C1-06    1      PASS     invalid trigger rejected at creation
+C1-07    1      PASS     explicit correction_id and timestamp honoured
+C2-01    2      PASS     verify a record from a clean environment (separate process, unrelated cwd, PyP
+C2-02    2      FAIL     attacker signs a record with their OWN key and embeds it (key substitution)
+C2-03    2      PASS     independent verifier (third-party RFC 8785 oracle, no corrlog code) verifies a
+C2-04    2      PASS     independent verifier verifies a record containing non-ASCII text (café, µ)
+C2-05    2      PASS     official JCS conformance vectors (cyberphone/json-canonicalization)
+C2-06    2      PASS     corrlog's shipped standalone verifier accepts a genuine record (pinned)
+C2-07    2      PASS     record moved to another location and verified without trusting the origin stor
+C3-01    3      PASS     alter the correction text (reason) after creation
+C3-02    3      PASS     alter the fix note after creation
+C3-03    3      PASS     alter the actor/owner (agent.id) after creation
+C3-04    3      PASS     alter the principal after creation
+C3-05    3      PASS     alter the timestamp after creation
+C3-06    3      PASS     alter the record ID after creation
+C3-07    3      PASS     alter the trigger after creation
+C3-08    3      PASS     alter the metadata after creation
+C3-09    3      PASS     alter the signature bytes after creation
+C3-10    3      PASS     alter the signature alg after creation
+C3-11    3      PASS     alter the canonicalization declaration after creation
+C3-12    3      PASS     alter the supersedes digest after creation
+C3-13    3      PASS     delete field 'reason' after creation
+C3-14    3      PASS     delete field 'trigger' after creation
+C3-15    3      PASS     delete field 'correctionId' after creation
+C3-16    3      PASS     delete field 'agent' after creation
+C3-17    3      PASS     delete field 'timestamp' after creation
+C3-18    3      PASS     delete field 'signature' after creation
+C3-19    3      PASS     delete field 'supersedes' after creation
+C3-20    3      PASS     delete field 'metadata' after creation
+C3-21    3      PASS     add top-level unexpected field
+C3-22    3      PASS     add extra field inside signature
+C3-23    3      PASS     add extra field inside agent
+C3-24    3      PASS     add extra field inside fix.source
+C3-25    3      PASS     add extra field inside supersedes.digest
+C3-26    3      PASS     swap the superseded ('original error') record for a different validly-signed o
+C3-27    3      PASS     swap in a different but validly-signed correction with the SAME correctionId
+C4-01    4      PASS     multiple successive corrections form a verifiable chain
+C4-02    4      PASS     each correction points at its immediate predecessor
+C4-03    4      PASS     delete an interior record of the chain
+C4-04    4      PASS     delete the ROOT (first) record of the chain
+C4-05    4      PASS     present a single orphaned correction with no predecessor
+C4-06    4      PASS     empty record list
+C4-07    4      PASS     reorder corrections in a chain
+C4-08    4      PASS     correction whose supersedes.receiptId points at an unrelated id
+C4-09    4      FAIL     correction timestamped BEFORE the action it supersedes
+C4-10    4      FAIL     two contradictory corrections both supersede the same record
+C5-01    5      PASS     modify a record in place inside the ledger file
+C5-02    5      FAIL     delete an entire record line from the ledger file
+C5-03    5      FAIL     reorder the record lines in the ledger file
+C5-04    5      FAIL     truncate the tail of the ledger (drop the most recent record)
+C5-05    5      FAIL     corrupt one line so it no longer parses
+C5-06    5      FAIL     is the JSONL ledger structurally append-only (not just by convention)?
+C6-01    6      PASS     append the same record three times to a MemorySink
+C6-02    6      FAIL     append the same record twice to a JsonlSink (replay a receipt)
+C6-03    6      PASS     in-chain replay (same record twice inside a chain)
+C6-04    6      FAIL     two different records sharing one correctionId in the same ledger
+C7-01    7      PASS     verify() on a non-object record: None
+C7-02    7      PASS     verify() on a non-object record: []
+C7-03    7      PASS     verify() on a non-object record: 'a string'
+C7-04    7      PASS     verify() on a non-object record: 42
+C7-05    7      PASS     verify() on a non-object record: True
+C7-06    7      PASS     verify() when signature is a non-object: 'abc'
+C7-07    7      PASS     verify() when signature is a non-object: 123
+C7-08    7      PASS     verify() when signature is a non-object: True
+C7-09    7      PASS     verify() when signature is a non-object: []
+C7-10    7      PASS     record with no signature at all
+C7-11    7      PASS     verify_chain() over a list containing a non-object
+C7-12    7      FAIL     JsonlSink.all() over a wholly malformed file
+C7-13    7      PASS     signed record that violates the bundled JSON Schema (empty reason, empty agent
+C7-14    7      PASS     record() action records validate against the ACR schema
+C7-15    7      PASS     unknown() uncertainty records validate against the ACR schema
+C8-01    8      PASS     verify the same record 50 times in one process
+C8-02    8      PASS     verification independent of dict key insertion order
+C8-03    8      PASS     verify after JSON serialization/deserialization round trip
+C8-04    8      PASS     verify a record that was pretty-printed and re-read
+C8-05    8      PASS     verification across three separate interpreter processes
+C8-06    8      PASS     tampered record rejected deterministically (50 runs)
+C8-07    8      PASS     canonical bytes stable for non-ASCII content within this implementation
+C9-01    9      PASS     correctionId defaults to a fresh UUID per record
+C9-02    9      PASS     correctionId is covered by the signature
+C9-03    9      PASS     invalid timestamp rejected
+C9-04    9      PASS     agent.id and principal.id are separately recorded and signed
+C9-05    9      FAIL     signature.kid is present but never resolved to a key
+C9-06    9      FAIL     agent.publicKey and signature.publicKey are independently settable
+C9-07    9      PASS     the supersedes pointer binds to prior-record BYTES, not just its id
+C9-08    9      PASS     load_private_key accepts every documented seed prefix
+--------------------------------------------------------------------------------------------------------------
+TOTAL 91   PASS 78   FAIL 13
+
+evidence -> /Users/shanelloyd/Documents/Codex/2026-09-10/referenced-chatgpt-conversation-this-is-an/work/corrlog/validation/evidence/matrix.json
+
+FAILURES:
+
+  [C2-02] severity=medium  (critical)
+      scenario : attacker signs a record with their OWN key and embeds it (key substitution)
+      expected : forged record must be rejected
+      actual   : verify(no pin)=True (accepted); verify(pinned to real key)=False
+
+  [C4-09] severity=medium  (corrlog_core.retract / verify_chain)
+      scenario : correction timestamped BEFORE the action it supersedes
+      expected : rejected, or at minimum flagged as temporally impossible
+      actual   : verify_chain=True; correction ts=1999, action ts=2026
+
+  [C4-10] severity=medium  (corrlog_core.verify_chain)
+      scenario : two contradictory corrections both supersede the same record
+      expected : both are individually valid; a contradiction should be detectable/flaggable
+      actual   : verify(cA)=True verify(cB)=True; verify_chain([r1,cA,cB])=False
+
+  [C5-02] severity=critical  (corrlog_core.JsonlSink (no ledger-level chain))
+      scenario : delete an entire record line from the ledger file
+      expected : detected -- a missing record in an append-only ledger must be evident
+      actual   : 2 records remain, all individually valid=True; verify_chain(remaining)=False
+
+  [C5-03] severity=high  (corrlog_core.JsonlSink)
+      scenario : reorder the record lines in the ledger file
+      expected : detected
+      actual   : all individually valid=True; no ledger-level order binding exists
+
+  [C5-04] severity=high  (corrlog_core.JsonlSink)
+      scenario : truncate the tail of the ledger (drop the most recent record)
+      expected : detected
+      actual   : 2 records remain, all valid=True
+
+  [C5-05] severity=high  (corrlog_core.JsonlSink.all)
+      scenario : corrupt one line so it no longer parses
+      expected : the corrupt record is reported as an error, not silently dropped
+      actual   : all() returned 2 records; damaged_lines=1
+
+  [C5-06] severity=high  (corrlog_core.JsonlSink.append)
+      scenario : is the JSONL ledger structurally append-only (not just by convention)?
+      expected : append-only is enforced (e.g. by an OS-level or hash-chain mechanism)
+      actual   : file mode=0o644; plain regular file, freely rewritable; no fsync, no chaining
+
+  [C6-02] severity=high  (corrlog_core.JsonlSink.append)
+      scenario : append the same record twice to a JsonlSink (replay a receipt)
+      expected : duplicate detected or rejected
+      actual   : len(all())=2; duplicates stored=True
+
+  [C6-04] severity=high  (corrlog_core.JsonlSink.get)
+      scenario : two different records sharing one correctionId in the same ledger
+      expected : rejected, or get() reports ambiguity
+      actual   : get(id) returned the record whose reason is 'wrong unit: kg vs tonne'; both stored
+
+  [C7-12] severity=medium  (corrlog_core.JsonlSink.all)
+      scenario : JsonlSink.all() over a wholly malformed file
+      expected : raises or reports clearly
+      actual   : returned [], damaged_lines=2
+
+  [C9-05] severity=medium  (corrlog_core.verify)
+      scenario : signature.kid is present but never resolved to a key
+      expected : kid is resolved against a key (or its non-validation is documented)
+      actual   : record signed with kid='NOT-ANY-KEY-ID' verifies=True; kid is never compared to anything
+
+  [C9-06] severity=high  (corrlog_core.verify)
+      scenario : agent.publicKey and signature.publicKey are independently settable
+      expected : a record whose agent.publicKey is not the signing key must be rejected
+      actual   : verify(no pin)=False (uses signature.publicKey); verify(pinned to agent.publicKey claim)=False
