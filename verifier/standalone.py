@@ -10,6 +10,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 from pathlib import Path
 import rfc8785
 from jsonschema import Draft202012Validator, FormatChecker
@@ -20,8 +21,40 @@ _SCHEMA = json.loads(Path(__file__).with_name('acr-v1.json').read_text(encoding=
 _VALIDATOR = Draft202012Validator(_SCHEMA, format_checker=FormatChecker())
 
 
+def _to_double_domain(value):
+    """Map parsed JSON numbers onto the RFC 8785 / I-JSON numeric domain.
+
+    A JSON number is an IEEE 754 double. Python parses 10000000000000000 as an
+    ``int`` and 10000000000000000.0 as a ``float``, and both spellings are the
+    same JSON number, so Python's type distinction must not change the verdict
+    (previously it did: a record the core accepted and signed was rejected here
+    once its canonical wire form was re-parsed).
+
+    Integers exactly representable as binary64 are normalised to that double
+    before canonicalization. Integers that would need rounding are rejected
+    rather than silently rounded. Canonicalization itself stays delegated to the
+    independent rfc8785 library; its integer-domain restriction is a Python
+    implementation artifact, not an RFC 8785 requirement.
+    """
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, int):
+        try:
+            as_double = float(value)
+        except OverflowError:
+            raise ValueError('integer outside the IEEE 754 double range')
+        if not math.isfinite(as_double) or int(as_double) != value:
+            raise ValueError('integer not exactly representable as an IEEE 754 double')
+        return as_double
+    if isinstance(value, dict):
+        return {k: _to_double_domain(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_to_double_domain(v) for v in value]
+    return value
+
+
 def canonical_bytes(obj):
-    return rfc8785.dumps(obj)
+    return rfc8785.dumps(_to_double_domain(obj))
 
 
 def _b64url_decode(value, length=None):

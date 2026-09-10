@@ -113,7 +113,7 @@ def test_jcs_official_and_differential():
         if not math.isfinite(number):continue
         value={'😀':number,'\ue000':[number,'café\n\x00',rng.randrange(-2**53+1,2**53)]}
         assert canonical_json(value)==rfc8785.dumps(value)
-    for invalid in [2**53,2**53+1,float('nan'),float('inf'),'\ud800']:
+    for invalid in [2**53+1,2**64+1,float('nan'),float('inf'),'\ud800']:
         with pytest.raises((ValueError,TypeError)):canonical_json(invalid)
 
 
