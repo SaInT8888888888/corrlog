@@ -12,7 +12,7 @@ Internal technical validation phase — **CLOSED**.
 | Wheel SHA-256 | `232d6f6668f42fae70f869347cf6fc82003ceb0031299c4f1e29ccb9e479b6ec` |
 | Pinned source / tag | `393d8d90d3977ce4b4b1ccf001a0b51c142c53db` (tag `v0.2.2`) |
 
-The validated CorrLog 0.2.2 source is commit 393d8d90d3977ce4b4b1ccf001a0b51c142c53db, tagged v0.2.2. Current master is one documentation/evidence-only closeout commit ahead. The validated product files are unchanged between the tag and current master.
+The validated CorrLog 0.2.2 source is commit 393d8d90d3977ce4b4b1ccf001a0b51c142c53db, tagged v0.2.2. Current master contains documentation/evidence-only closeout changes after that tag. The validated product files are unchanged between the tag and current master.
 
 ## Final claims
 
