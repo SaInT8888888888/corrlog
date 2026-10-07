@@ -8,6 +8,11 @@ Individual records can be verified offline against a separately trusted public k
 Signatures do not prove the assertions true or that every event was recorded.
 JSONL storage is not a tamper-evident ledger.
 
+Integrity applies to the **canonical signed representation** of a record — the RFC 8785
+canonical form and the signed semantic values inside it — not to arbitrary file-byte
+spelling. Records are canonicalised before signing, so a signature covers the canonical
+form rather than every possible textual encoding of the same content.
+
 - **`corrlog-core`** — Ed25519 signing, RFC 8785 canonicalization, schema validation,
   explicit trusted verification, rooted correction-chain checks and optional replay admission.
   Runtime dependencies: `cryptography`, `jsonschema`.
@@ -128,6 +133,9 @@ Inspect emission does not automatically use this guard. See SPEC.md and SECURITY
 
 ## Exact values
 
+**Rule: use strings for exact money, identifiers, counters, timestamps and large integer
+quantities when every digit matters.**
+
 JSON numbers have binary64 precision. Use strings for exact decimal amounts,
 identifiers and large counts, for example `{"amount": "100.33", "account": "9007199254740993"}`.
 Constructors reject inexact Python integer inputs before signing; verification checks
@@ -140,9 +148,40 @@ This is unreleased remediation for 0.2.2. Do not assume the published 0.2.1 pack
 contains these fixes. Install the reviewed source/wheel for testing. No production
 readiness or release approval is implied. See RELEASE_READINESS.md for evidence.
 
+**Note (October 2026, validation closeout):** 0.2.2 has since been published
+(`corrlog-core` 0.2.2, wheel SHA-256 `232d6f6668f42fae70f869347cf6fc82003ceb0031299c4f1e29ccb9e479b6ec`)
+and its internal technical validation is closed as **VALIDATED WITH QUALIFICATIONS** — see
+[VALIDATION_STATUS-0.2.2.md](VALIDATION_STATUS-0.2.2.md). The sentence above describing 0.2.2
+as unreleased remediation is retained as history. Publication and validation closure imply
+no production readiness or release approval.
+
 The canonicalization correction can reject historical 0.2.1 records. Schema validation
 also rejects malformed records previously accepted. Preserve legacy archives; do not
 silently re-sign them. CorrLog does not certify compliance or implement retention policy.
+
+## Validation status (0.2.2)
+
+**CorrLog Core 0.2.2 — VALIDATED WITH QUALIFICATIONS.** Internal technical validation of the
+pinned 0.2.2 artefact is **CLOSED**. An adversarial validation pass, and a supplement closing six
+coverage gaps, were executed against the pinned published wheel (`232d6f66…`) and the pinned
+source/tag `393d8d90d3977ce4b4b1ccf001a0b51c142c53db` (tag `v0.2.2`). Both independent scorers
+converged on VALIDATED WITH QUALIFICATIONS, with no evidenced CorrLog product defect.
+
+- Final status and per-claim outcomes: [VALIDATION_STATUS-0.2.2.md](VALIDATION_STATUS-0.2.2.md)
+- Preserved scoring reports and evidence hashes: [validation/closeout/2026-10/](validation/closeout/2026-10/README.md)
+
+Two boundaries matter when reading that status.
+
+1. **Integrity is over the canonical signed representation.** A signature covers the record's
+   RFC 8785 canonical form and the signed semantic values inside it — not arbitrary file-byte
+   spelling, and not every possible decimal spelling of a number. `9007199254740992` and
+   `9007199254740993` map to the same signed binary64 value, so encode exact quantities as
+   strings (see **Exact values**).
+2. **Closure is not a product-safety claim.** It does not mean production readiness, regulatory
+   compliance or certification, that CorrLog detects AI errors itself, that a correction is
+   factually true, that the correction history is complete, that the JSONL store is an immutable
+   or tamper-proof ledger, that key rotation/revocation is supported in 0.2.2, or that an
+   independently implemented third-party verifier exists.
 
 ## Tests
 

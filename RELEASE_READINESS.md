@@ -1,5 +1,20 @@
 # CorrLog release-readiness review — 10 September 2026
 
+> ## ⚠️ Historical document — September 2026
+>
+> This is a **September 2026 release-readiness review**, preserved as history. It is **not** the
+> current status of the 0.2.2 line.
+>
+> - The published, pinned **0.2.2** artefact (wheel
+>   `232d6f6668f42fae70f869347cf6fc82003ceb0031299c4f1e29ccb9e479b6ec`, tag `v0.2.2` =
+>   `393d8d90d3977ce4b4b1ccf001a0b51c142c53db`) subsequently completed the **October 2026
+>   adversarial validation** and its supplement.
+> - Final internal validation status: **VALIDATED WITH QUALIFICATIONS** — see
+>   [VALIDATION_STATUS-0.2.2.md](VALIDATION_STATUS-0.2.2.md).
+> - Nothing in this file has been rewritten or deleted. Statements below describing 0.2.2 as a
+>   remediation candidate reflect the September position at the time of writing.
+> - **Validation closure does not mean production ready and does not mean regulator certified.**
+
 ## Decision
 
 **0.2.2 remains a reviewed remediation candidate, not approved for publication.**
